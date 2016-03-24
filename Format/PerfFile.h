@@ -27,6 +27,11 @@ class PerfFile
         // reads data section (needs to have header read first)
         bool ReadData();
 
+        // resolve symbols from supplied file
+        void ResolveSymbols(const char* binaryFilename);
+        // use specified file descriptor to resolve symbols from (in nm format)
+        int ResolveSymbolsUsingFD(int fd);
+
     private:
         // perf file we read
         FILE* m_file;
@@ -44,6 +49,9 @@ class PerfFile
         std::vector<perf_trace_event_type> m_traceInfo;
         // stored loaded records (events from data section)
         std::list<record_t*> m_records;
+
+        // table of addresses of functions
+        std::vector<FunctionEntry> m_functionTable;
 };
 
 #endif

@@ -4,6 +4,10 @@
 #include "PerfFile.h"
 #include "PerfRecords.h"
 #include "Log.h"
+#include "Helpers.h"
+#include "../config_perf.h"
+
+#include <algorithm>
 
 PerfFile::PerfFile()
 {
@@ -35,12 +39,109 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
         return nullptr;
     }
 
+    pfile->ResolveSymbols(binaryfilename);
+
     // TODO: analyze data, read functions table (nm, /proc/kallsyms, misc dbg info from libraries from ldd output), etc.
 
     fclose(pf);
 
     return pfile;
 }
+
+void PerfFile::ResolveSymbols(const char* binaryFilename)
+{
+    int cnt = 0;
+
+    // build nm binary call parameters
+    const char *argv[] = {NM_BINARY_PATH, "-a", "-C", binaryFilename, 0};
+
+    // retrieve symbols from binary file
+    int readfd = ForkProcessForReading(argv);
+    if (readfd > 0)
+    {
+        cnt += ResolveSymbolsUsingFD(readfd);
+        close(readfd);
+    }
+    else
+        LogFunc(LOG_ERROR, "Could not execute nm binary for symbol resolving, no symbols loaded");
+
+    // retrieve kernel symbols
+    FILE* kallsymfile = fopen("/proc/kallsyms", "r");
+    if (kallsymfile)
+    {
+        readfd = fileno(kallsymfile);
+        cnt += ResolveSymbolsUsingFD(readfd);
+        fclose(kallsymfile);
+    }
+    else
+        LogFunc(LOG_ERROR, "Could not load kernel symbols from /proc/kallsyms");
+
+    // sort function entries to allow effective search
+    std::sort(m_functionTable.begin(), m_functionTable.end(), FunctionEntrySortPredicate());
+
+    LogFunc(LOG_VERBOSE, "Loaded %i symbols from available sources", cnt);
+}
+
+int PerfFile::ResolveSymbolsUsingFD(int fd)
+{
+    // buffer for reading lines from nm stdout
+    char buffer[256];
+
+    // Read from child’s stdout
+    int res, pos, cnt;
+    char c;
+    uint64_t laddr;
+    char* endptr;
+    char fncType;
+
+    cnt = 0;
+
+    // line reading loop - terminated by file end
+    while (true)
+    {
+        pos = 0;
+        while ((res = read(fd, &c, sizeof(char))) == 1)
+        {
+            // stop reading line when end of line character is acquired
+            if (c == 10 || c == 13)
+                break;
+
+            // read only 255 characters, strip the rest
+            if (pos < 255)
+                buffer[pos++] = c;
+        }
+
+        // this both means end of file - eighter no character was read, or we reached zero character
+        if (res <= 0 || c == 0)
+            break;
+
+        // properly null-perminate string
+        buffer[pos] = 0;
+
+        // require some minimal length, parsing would fail anyway
+        if (strlen(buffer) < 8)
+            continue;
+
+        // parse address
+        laddr = strtoull(buffer, &endptr, 16);
+        if (endptr - buffer + 2 > pos)
+            break;
+
+        // resolve function type
+        fncType = *(endptr+1);
+        if (fncType == 'T' || fncType == 't')
+            fncType = FET_TEXT;
+        else
+            fncType = FET_MISC;
+
+        // store "the rest of line" as function name to function table
+        m_functionTable.push_back({ laddr, 0, endptr+3, NO_CLASS, (FunctionEntryType)fncType });
+        cnt++;
+    }
+
+    return cnt;
+}
+
 
 bool PerfFile::ReadAndCheckHeader()
 {
@@ -227,7 +328,7 @@ bool PerfFile::ReadData()
     */
 
     perf_event evt;
-    void* loaded_data = nullptr;
+    uint8_t* loaded_data = nullptr;
     perf_sample sample;
     uint64_t event_number = 0;
     uint32_t esize, prevsize = 0;

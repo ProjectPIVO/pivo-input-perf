@@ -31,17 +31,6 @@ enum perf_event_sample_format
     PERF_SAMPLE_MAX = 1 << 19
 };
 
-enum perf_event_type
-{
-    PERF_RECORD_MMAP = 1,
-    PERF_RECORD_LOST = 2,
-    PERF_RECORD_COMM = 3,
-    PERF_RECORD_EXIT = 4,
-
-    PERF_RECORD_FORK = 7,
-    PERF_RECORD_SAMPLE = 9
-};
-
 // taken from linux/perf_event.h
 struct perf_event_attr
 {
