@@ -1,5 +1,6 @@
 #include "General.h"
 #include "PerfInputModule.h"
+#include "PerfFile.h"
 #include "Log.h"
 
 void(*LogFunc)(int, const char*, ...) = nullptr;
@@ -49,9 +50,9 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
 {
-    // TODO
+    PerfFile* pfile = PerfFile::Load(file, binaryFile);
 
-    return true;
+    return (pfile != nullptr);
 }
 
 void PerfInputModule::GetClassTable(std::vector<ClassEntry> &dst)

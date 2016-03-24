@@ -50,3 +50,10 @@ ENDFOREACH()
 
 # core part is also executable - add executable to be built from these files
 ADD_LIBRARY(pivo-input-perf SHARED ${modulefiles})
+
+IF(CMAKE_COMPILER_IS_GNUCXX)
+    TARGET_LINK_LIBRARIES(pivo-input-perf m)
+ENDIF()
+
+FIND_PROGRAM(NM_BINARY_PATH NAMES nm)
+CONFIGURE_FILE(config_perf.h.in config_perf.h)
