@@ -7,6 +7,7 @@
 #include "Helpers.h"
 #include "../config_perf.h"
 
+#include <set>
 #include <algorithm>
 
 PerfFile::PerfFile()
@@ -43,6 +44,7 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
     std::sort(pfile->m_records.begin(), pfile->m_records.end(), PerfRecordTimeSortPredicate());
 
     pfile->ResolveSymbols(binaryfilename);
+    pfile->FilterUsedSymbols();
 
     // TODO: analyze data, read functions table (nm, /proc/kallsyms, misc dbg info from libraries from ldd output), etc.
 
@@ -101,6 +103,47 @@ void PerfFile::ProcessFlatProfile()
             }
         }
     }
+}
+
+void PerfFile::FilterUsedSymbols()
+{
+    uint32_t findex;
+    uint64_t tmpip;
+    FunctionEntry* fet;
+    record_sample* sample;
+
+    std::set<uint64_t> usedIPs;
+
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            sample = ((record_sample*)itr);
+
+            fet = GetSymbolByAddress(sample->ip, &findex);
+            if (fet && usedIPs.find(fet->address) == usedIPs.end())
+            {
+                m_functionTable.push_back(*fet);
+                usedIPs.insert(fet->address);
+
+                for (uint64_t i = 0; i < sample->callchain->nr; i++)
+                {
+                    tmpip = sample->callchain->ips[i];
+
+                    fet = GetSymbolByAddress(tmpip, &findex);
+                    if (fet && usedIPs.find(fet->address) == usedIPs.end())
+                    {
+                        m_functionTable.push_back(*fet);
+                        usedIPs.insert(fet->address);
+                    }
+                }
+            }
+        }
+    }
+
+    std::sort(m_functionTable.begin(), m_functionTable.end(), FunctionEntrySortPredicate());
+
+    LogFunc(LOG_VERBOSE, "Used symbols: %u", m_functionTable.size());
 }
 
 void PerfFile::ResolveSymbols(const char* binaryFilename)
@@ -163,13 +206,13 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
             // the base address is mandatory here, since the memory is mmap'd to
             // another offset in virtual address space, thus all symbols are
             // moved by this offset
-            cnt += ResolveSymbolsUsingFD(readfd, itr->start);
+            cnt += ResolveSymbolsUsingFD(readfd, itr->start, FET_MISC);
             close(readfd);
         }
     }
 
     // sort function entries to allow effective search
-    std::sort(m_functionTable.begin(), m_functionTable.end(), FunctionEntrySortPredicate());
+    std::sort(m_symbolTable.begin(), m_symbolTable.end(), FunctionEntrySortPredicate());
 
     LogFunc(LOG_VERBOSE, "Loaded %i symbols from available sources", cnt);
 }
@@ -232,7 +275,7 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
             fncType = overrideType;
 
         // store "the rest of line" as function name to function table
-        m_functionTable.push_back({ laddr + baseAddress, 0, endptr+3, NO_CLASS, (FunctionEntryType)fncType });
+        m_symbolTable.push_back({ laddr + baseAddress, 0, endptr+3, NO_CLASS, (FunctionEntryType)fncType });
         cnt++;
     }
 
@@ -241,10 +284,25 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
 
 FunctionEntry* PerfFile::GetFunctionByAddress(uint64_t address, uint32_t* functionIndex)
 {
+    return GetSymbolRecordByAddress(m_functionTable, address, functionIndex);
+}
+
+FunctionEntry* PerfFile::GetSymbolByAddress(uint64_t address, uint32_t* functionIndex)
+{
+    return GetSymbolRecordByAddress(m_symbolTable, address, functionIndex);
+}
+
+FunctionEntry* PerfFile::GetSymbolRecordByAddress(std::vector<FunctionEntry> &source, uint64_t address, uint32_t* functionIndex)
+{
     if (functionIndex)
         *functionIndex = 0;
 
-    if (m_functionTable.empty())
+    if (source.empty())
+        return nullptr;
+
+    // beyond this address, the symbols are somehow unresolvable
+    // TODO: find out why; not critical, only kernel modules at these IPs
+    if (address > 0xFFFFFFFFFFFFF000)
         return nullptr;
 
     // we assume that m_functionTable is sorted from lower address to higher
@@ -253,14 +311,14 @@ FunctionEntry* PerfFile::GetFunctionByAddress(uint64_t address, uint32_t* functi
     uint64_t ilow, ihigh, imid;
 
     ilow = 0;
-    ihigh = m_functionTable.size() - 1;
+    ihigh = source.size() - 1;
 
     imid = (ilow + ihigh) / 2;
 
     // iterative binary search
     while (ilow <= ihigh)
     {
-        if (m_functionTable[imid].address > address)
+        if (source[imid].address > address)
             ihigh = imid - 1;
         else
             ilow = imid + 1;
@@ -271,17 +329,17 @@ FunctionEntry* PerfFile::GetFunctionByAddress(uint64_t address, uint32_t* functi
     // the outcome may be one step higher (depending from which side we arrived), than we would like to have - we are looking for
     // "highest lower address", i.e. for addresses 2, 5, 10, and input address 7, we return entry with address 5
 
-    if (m_functionTable[ilow].address <= address)
+    if (source[ilow].address <= address)
     {
         if (functionIndex)
             *functionIndex = ilow;
-        return &m_functionTable[ilow];
+        return &source[ilow];
     }
 
     if (functionIndex)
         *functionIndex = ilow - 1;
 
-    return &m_functionTable[ilow - 1];
+    return &source[ilow - 1];
 }
 
 bool PerfFile::ReadAndCheckHeader()

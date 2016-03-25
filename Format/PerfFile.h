@@ -48,9 +48,15 @@ class PerfFile
         void ResolveSymbols(const char* binaryFilename);
         // use specified file descriptor to resolve symbols from (in nm format)
         int ResolveSymbolsUsingFD(int fd, uint64_t baseAddress = 0x0, FunctionEntryType overrideType = FET_DONTCARE);
+        // filter symbols - use only sampled ones (the ones present in perf file)
+        void FilterUsedSymbols();
 
         // retrieves function entry based on input address
+        FunctionEntry* GetSymbolRecordByAddress(std::vector<FunctionEntry> &source, uint64_t address, uint32_t* functionIndex);
+        // retrieves function entry based on input address
         FunctionEntry* GetFunctionByAddress(uint64_t address, uint32_t* functionIndex);
+        // retrieves function entry based on input address
+        FunctionEntry* GetSymbolByAddress(uint64_t address, uint32_t* functionIndex);
 
         // processess flat profile from available data
         void ProcessFlatProfile();
@@ -77,6 +83,8 @@ class PerfFile
 
         // table of addresses of functions
         std::vector<FunctionEntry> m_functionTable;
+        // table of symbols found
+        std::vector<FunctionEntry> m_symbolTable;
 
         // table of flat profile records
         std::vector<FlatProfileRecord> m_flatProfile;
