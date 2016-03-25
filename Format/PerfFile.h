@@ -5,6 +5,7 @@
 
 #include "UnitIdentifiers.h"
 #include "FlatProfileStructs.h"
+#include "CallGraphStructs.h"
 
 #include <set>
 
@@ -30,6 +31,8 @@ class PerfFile
         void FillFunctionTable(std::vector<FunctionEntry> &dst);
         // fills flat profile table
         void FillFlatProfileTable(std::vector<FlatProfileRecord> &dst);
+        // fills call graph map with gathered data
+        void FillCallGraphMap(CallGraphMap &dst);
 
     protected:
         // private constructor; use PerfFile::Load to instantiate this class
@@ -60,6 +63,8 @@ class PerfFile
 
         // processess flat profile from available data
         void ProcessFlatProfile();
+        // creates call graph map
+        void ProcessCallGraph();
 
     private:
         // perf file we read
@@ -88,6 +93,8 @@ class PerfFile
 
         // table of flat profile records
         std::vector<FlatProfileRecord> m_flatProfile;
+        // call graph map
+        CallGraphMap m_callGraph;
 };
 
 #endif

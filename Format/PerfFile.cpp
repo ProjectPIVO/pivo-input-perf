@@ -46,9 +46,8 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
     pfile->ResolveSymbols(binaryfilename);
     pfile->FilterUsedSymbols();
 
-    // TODO: analyze data, read functions table (nm, /proc/kallsyms, misc dbg info from libraries from ldd output), etc.
-
     pfile->ProcessFlatProfile();
+    pfile->ProcessCallGraph();
 
     fclose(pf);
 
@@ -67,11 +66,12 @@ void PerfFile::ProcessFlatProfile()
         fp = &m_flatProfile[i];
 
         fp->functionId = i;
-        fp->callCount = 0;
         fp->timeTotal = 0;
         fp->timeTotalPct = 0.0f;
     }
 
+    record_sample* sample;
+    FunctionEntry* fet;
     uint64_t lastTime = 0;
     uint32_t lastFindex = 0;
     double baseTime;
@@ -81,11 +81,11 @@ void PerfFile::ProcessFlatProfile()
     {
         if (itr->type == PERF_RECORD_SAMPLE)
         {
-            record_sample* sample = ((record_sample*)itr);
-            FunctionEntry* fet;
+            sample = ((record_sample*)itr);
 
             fet = GetFunctionByAddress(sample->ip, &findex);
-            if (fet /*&& fet->functionType != FET_KERNEL*/)
+            // for now, exclude kernel symbols (for sanity reasons)
+            if (fet && fet->functionType != FET_KERNEL)
             {
                 if (lastTime != 0)
                 {
@@ -98,8 +98,61 @@ void PerfFile::ProcessFlatProfile()
 
                 lastTime = sample->header.time;
                 lastFindex = findex;
+            }
+        }
+    }
+}
 
-                m_flatProfile[findex].callCount++;
+void PerfFile::ProcessCallGraph()
+{
+    FlatProfileRecord *fp;
+    record_sample* sample;
+    FunctionEntry* fet;
+
+    // nullify call counts
+    for (int i = 0; i < m_functionTable.size(); i++)
+    {
+        fp = &m_flatProfile[i];
+        fp->callCount = 0;
+    }
+
+    uint64_t tmpip;
+    uint32_t findex, srcIndex, dstIndex;
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            sample = ((record_sample*)itr);
+
+            fet = GetFunctionByAddress(sample->ip, &findex);
+            // for now, exclude kernel symbols from output (for sanity reasons)
+            if (fet && fet->functionType != FET_KERNEL)
+            {
+                dstIndex = findex;
+
+                // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
+                // and self as second record
+                for (uint64_t i = 2; i < sample->callchain->nr; i++)
+                {
+                    tmpip = sample->callchain->ips[i];
+
+                    fet = GetFunctionByAddress(tmpip, &srcIndex);
+                    // also exclude kernel calls for now
+                    if (fet && fet->functionType != FET_KERNEL)
+                    {
+                        if (m_callGraph.find(srcIndex) == m_callGraph.end() ||
+                            m_callGraph[srcIndex].find(dstIndex) == m_callGraph[srcIndex].end())
+                        {
+                            m_callGraph[srcIndex][dstIndex] = 0;
+                        }
+
+                        // rather than call count, we use something like "samples count" here
+                        m_callGraph[srcIndex][dstIndex] += 1;
+                        m_flatProfile[dstIndex].callCount++;
+
+                        dstIndex = srcIndex;
+                    }
+                }
             }
         }
     }
@@ -300,11 +353,6 @@ FunctionEntry* PerfFile::GetSymbolRecordByAddress(std::vector<FunctionEntry> &so
     if (source.empty())
         return nullptr;
 
-    // beyond this address, the symbols are somehow unresolvable
-    // TODO: find out why; not critical, only kernel modules at these IPs
-    if (address > 0xFFFFFFFFFFFFF000)
-        return nullptr;
-
     // we assume that m_functionTable is sorted from lower address to higher
     // so we are able to perform binary search in O(log(n)) complexity
 
@@ -328,6 +376,9 @@ FunctionEntry* PerfFile::GetSymbolRecordByAddress(std::vector<FunctionEntry> &so
 
     // the outcome may be one step higher (depending from which side we arrived), than we would like to have - we are looking for
     // "highest lower address", i.e. for addresses 2, 5, 10, and input address 7, we return entry with address 5
+
+    if (ilow >= source.size())
+        ilow = source.size() - 1;
 
     if (source[ilow].address <= address)
     {
@@ -656,4 +707,12 @@ void PerfFile::FillFunctionTable(std::vector<FunctionEntry> &dst)
 void PerfFile::FillFlatProfileTable(std::vector<FlatProfileRecord> &dst)
 {
     dst.assign(m_flatProfile.begin(), m_flatProfile.end());
+}
+
+void PerfFile::FillCallGraphMap(CallGraphMap &dst)
+{
+    // perform deep copy
+    for (CallGraphMap::iterator itr = m_callGraph.begin(); itr != m_callGraph.end(); ++itr)
+        for (std::map<uint32_t, uint64_t>::iterator sitr = itr->second.begin(); sitr != itr->second.end(); ++sitr)
+            dst[itr->first][sitr->first] = sitr->second;
 }

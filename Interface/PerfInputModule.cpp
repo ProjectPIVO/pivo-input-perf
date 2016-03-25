@@ -47,6 +47,9 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
 
     // flat profile is supported
     IMF_ADD(set, IMF_FLAT_PROFILE);
+
+    // call graph is supported
+    IMF_ADD(set, IMF_CALL_GRAPH);
 }
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
@@ -81,5 +84,5 @@ void PerfInputModule::GetCallGraphMap(CallGraphMap &dst)
 {
     dst.clear();
 
-    // TODO
+    m_pfile->FillCallGraphMap(dst);
 }
