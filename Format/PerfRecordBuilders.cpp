@@ -156,6 +156,24 @@ record_t* create_mmap_msg(mmap_event *evt)
     return &rec->header;
 }
 
+record_t* create_mmap2_msg(mmap2_event *evt)
+{
+    record_mmap2* rec = new record_mmap2;
+    rec->header.pid = evt->pid;
+    rec->header.tid = evt->tid;
+    rec->start = evt->start;
+    rec->len = evt->len;
+    rec->pgoff = evt->pgoff;
+    rec->major = evt->major;
+    rec->minor = evt->minor;
+    rec->ino = evt->ino;
+    rec->ino_gen = evt->ino_gen;
+    rec->prot = evt->prot;
+    rec->flags = evt->flags;
+    memcpy(rec->filename, evt->filename, sizeof(rec->filename));
+    return &rec->header;
+}
+
 record_t* create_comm_msg(comm_event *evt)
 {
     record_comm* rec = new record_comm;
@@ -194,5 +212,11 @@ record_t* create_sample_msg(perf_sample *evt)
     rec->header.id = evt->id;
     rec->ip = evt->ip;
     rec->period = evt->period;
+    rec->callchain = new ip_callchain;
+
+    rec->callchain->nr = evt->callchain->nr;
+    rec->callchain->ips = new uint64_t[rec->callchain->nr];
+    memcpy(rec->callchain->ips, evt->callchain->ips, rec->callchain->nr * sizeof(uint64_t));
+
     return &rec->header;
 }

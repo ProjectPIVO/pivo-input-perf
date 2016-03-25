@@ -3,16 +3,33 @@
 
 #include "PerfFileStructs.h"
 
+#include "UnitIdentifiers.h"
+#include "FlatProfileStructs.h"
+
 #include <set>
 
 // currently supported perf file version is 2 (magic PERFILE2)
 const char perfFileMagic[PERF_FILE_MAGIC_LENGTH] = { 'P', 'E', 'R', 'F', 'I', 'L', 'E', '2' };
+
+// structure used for sorting std::vector of FlatProfileRecord by time spent
+struct PerfRecordTimeSortPredicate
+{
+    inline bool operator() (const record_t* a, const record_t* b)
+    {
+        return (a->time < b->time);
+    }
+};
 
 class PerfFile
 {
     public:
         // static factory method for loading perf recorded file
         static PerfFile* Load(const char* filename, const char* binaryfilename);
+
+        // fills function table with symbol info resolved
+        void FillFunctionTable(std::vector<FunctionEntry> &dst);
+        // fills flat profile table
+        void FillFlatProfileTable(std::vector<FlatProfileRecord> &dst);
 
     protected:
         // private constructor; use PerfFile::Load to instantiate this class
@@ -30,7 +47,13 @@ class PerfFile
         // resolve symbols from supplied file
         void ResolveSymbols(const char* binaryFilename);
         // use specified file descriptor to resolve symbols from (in nm format)
-        int ResolveSymbolsUsingFD(int fd);
+        int ResolveSymbolsUsingFD(int fd, uint64_t baseAddress = 0x0, FunctionEntryType overrideType = FET_DONTCARE);
+
+        // retrieves function entry based on input address
+        FunctionEntry* GetFunctionByAddress(uint64_t address, uint32_t* functionIndex);
+
+        // processess flat profile from available data
+        void ProcessFlatProfile();
 
     private:
         // perf file we read
@@ -48,10 +71,15 @@ class PerfFile
         // trace info blocks
         std::vector<perf_trace_event_type> m_traceInfo;
         // stored loaded records (events from data section)
-        std::list<record_t*> m_records;
+        std::vector<record_t*> m_records;
+        // stored mmap2 events (to resolve symbols later)
+        std::vector<record_mmap2*> m_mmaps2;
 
         // table of addresses of functions
         std::vector<FunctionEntry> m_functionTable;
+
+        // table of flat profile records
+        std::vector<FlatProfileRecord> m_flatProfile;
 };
 
 #endif

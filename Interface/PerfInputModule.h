@@ -4,6 +4,8 @@
 #include "InputModule.h"
 #include "InputModuleFeatures.h"
 
+class PerfFile;
+
 extern void(*LogFunc)(int, const char*, ...);
 
 class PerfInputModule : public InputModule
@@ -25,7 +27,7 @@ class PerfInputModule : public InputModule
         //
 
     private:
-        //
+        PerfFile* m_pfile;
 };
 
 #endif

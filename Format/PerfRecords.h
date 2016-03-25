@@ -6,6 +6,15 @@
 // taken from linux/limits.h, aligned to fit perf format
 #define UX_PATH_MAX 4096
 
+struct perf_event;
+struct perf_sample;
+struct mmap_event;
+struct mmap2_event;
+struct comm_event;
+struct fork_event;
+struct exit_event;
+struct ip_callchain;
+
 enum perf_event_type
 {
     PERF_RECORD_MMAP = 1,
@@ -14,7 +23,8 @@ enum perf_event_type
     PERF_RECORD_EXIT = 4,
 
     PERF_RECORD_FORK = 7,
-    PERF_RECORD_SAMPLE = 9
+    PERF_RECORD_SAMPLE = 9,
+    PERF_RECORD_MMAP2 = 10
 };
 
 struct record_t
@@ -34,6 +44,21 @@ struct record_mmap
     uint64_t start;
     uint64_t len;
     uint64_t pgoff;
+    char filename[UX_PATH_MAX];
+};
+
+struct record_mmap2
+{
+    record_t header;
+    uint64_t start;
+    uint64_t len;
+    uint64_t pgoff;
+    uint32_t major;
+    uint32_t minor;
+    uint64_t ino;
+    uint64_t ino_gen;
+    uint32_t prot;
+    uint32_t flags;
     char filename[UX_PATH_MAX];
 };
 
@@ -62,19 +87,14 @@ struct record_sample
     record_t header;
     uint64_t ip;
     uint64_t period;
+    ip_callchain* callchain;
 };
-
-struct perf_event;
-struct perf_sample;
-struct mmap_event;
-struct comm_event;
-struct fork_event;
-struct exit_event;
 
 int perf_event__parse_id_sample(perf_event *event, uint64_t type, perf_sample *sample);
 int perf_event__parse_sample(perf_event *event, uint64_t type, bool sample_id_all, perf_sample *data);
 
 record_t* create_mmap_msg(mmap_event *evt);
+record_t* create_mmap2_msg(mmap2_event *evt);
 record_t* create_comm_msg(comm_event *evt);
 record_t* create_fork_msg(fork_event *evt);
 record_t* create_exit_msg(exit_event *evt);

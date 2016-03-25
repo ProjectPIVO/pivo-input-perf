@@ -39,18 +39,75 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
         return nullptr;
     }
 
+    // sort records by time
+    std::sort(pfile->m_records.begin(), pfile->m_records.end(), PerfRecordTimeSortPredicate());
+
     pfile->ResolveSymbols(binaryfilename);
 
     // TODO: analyze data, read functions table (nm, /proc/kallsyms, misc dbg info from libraries from ldd output), etc.
+
+    pfile->ProcessFlatProfile();
 
     fclose(pf);
 
     return pfile;
 }
 
+void PerfFile::ProcessFlatProfile()
+{
+    m_flatProfile.resize(m_functionTable.size());
+
+    FlatProfileRecord *fp;
+
+    // prepare flat profile table, it will match function table at first stage of filling
+    for (int i = 0; i < m_functionTable.size(); i++)
+    {
+        fp = &m_flatProfile[i];
+
+        fp->functionId = i;
+        fp->callCount = 0;
+        fp->timeTotal = 0;
+        fp->timeTotalPct = 0.0f;
+    }
+
+    uint64_t lastTime = 0;
+    uint32_t lastFindex = 0;
+    double baseTime;
+
+    uint32_t findex;
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            record_sample* sample = ((record_sample*)itr);
+            FunctionEntry* fet;
+
+            fet = GetFunctionByAddress(sample->ip, &findex);
+            if (fet /*&& fet->functionType != FET_KERNEL*/)
+            {
+                if (lastTime != 0)
+                {
+                    // time in perf file format is in nanoseconds (based on system uptime, but
+                    // that is not important, since we need only relative differences)
+                    baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
+                    m_flatProfile[findex].timeTotal += baseTime;
+                    m_flatProfile[lastFindex].timeTotal += baseTime;
+                }
+
+                lastTime = sample->header.time;
+                lastFindex = findex;
+
+                m_flatProfile[findex].callCount++;
+            }
+        }
+    }
+}
+
 void PerfFile::ResolveSymbols(const char* binaryFilename)
 {
     int cnt = 0;
+
+    LogFunc(LOG_VERBOSE, "Loading debug symbols from application binary...");
 
     // build nm binary call parameters
     const char *argv[] = {NM_BINARY_PATH, "-a", "-C", binaryFilename, 0};
@@ -65,16 +122,51 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     else
         LogFunc(LOG_ERROR, "Could not execute nm binary for symbol resolving, no symbols loaded");
 
+    LogFunc(LOG_VERBOSE, "Loading kernel debug symbols...");
+
     // retrieve kernel symbols
     FILE* kallsymfile = fopen("/proc/kallsyms", "r");
     if (kallsymfile)
     {
         readfd = fileno(kallsymfile);
-        cnt += ResolveSymbolsUsingFD(readfd);
+        cnt += ResolveSymbolsUsingFD(readfd, 0, FET_KERNEL);
         fclose(kallsymfile);
     }
     else
         LogFunc(LOG_ERROR, "Could not load kernel symbols from /proc/kallsyms");
+
+    LogFunc(LOG_VERBOSE, "Loading debug symbols from dynamically linked libraries...");
+
+    std::string libpath;
+    // go through all mmap'd records (via mmap2) and try to load debug libraries connected with them
+    for (record_mmap2* itr : m_mmaps2)
+    {
+        // TODO: find more portable way to look for debug library path
+        // by default, Debian-based systems stores such libs in /usr/lib/debug
+        libpath = "/usr/lib/debug";
+        libpath += itr->filename;
+
+        FILE* tst = fopen(libpath.c_str(), "r");
+        if (!tst)
+            continue;
+
+        fclose(tst);
+
+        LogFunc(LOG_VERBOSE, "Loading debug symbols from %s...", libpath.c_str());
+
+        // substitute binary parameter in "nm" command line
+        argv[3] = libpath.c_str();
+
+        readfd = ForkProcessForReading(argv);
+        if (readfd > 0)
+        {
+            // the base address is mandatory here, since the memory is mmap'd to
+            // another offset in virtual address space, thus all symbols are
+            // moved by this offset
+            cnt += ResolveSymbolsUsingFD(readfd, itr->start);
+            close(readfd);
+        }
+    }
 
     // sort function entries to allow effective search
     std::sort(m_functionTable.begin(), m_functionTable.end(), FunctionEntrySortPredicate());
@@ -82,7 +174,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     LogFunc(LOG_VERBOSE, "Loaded %i symbols from available sources", cnt);
 }
 
-int PerfFile::ResolveSymbolsUsingFD(int fd)
+int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryType overrideType)
 {
     // buffer for reading lines from nm stdout
     char buffer[256];
@@ -129,19 +221,68 @@ int PerfFile::ResolveSymbolsUsingFD(int fd)
 
         // resolve function type
         fncType = *(endptr+1);
-        if (fncType == 'T' || fncType == 't')
-            fncType = FET_TEXT;
+        if (overrideType == FET_DONTCARE)
+        {
+            if (fncType == 'T' || fncType == 't')
+                fncType = FET_TEXT;
+            else
+                fncType = FET_MISC;
+        }
         else
-            fncType = FET_MISC;
+            fncType = overrideType;
 
         // store "the rest of line" as function name to function table
-        m_functionTable.push_back({ laddr, 0, endptr+3, NO_CLASS, (FunctionEntryType)fncType });
+        m_functionTable.push_back({ laddr + baseAddress, 0, endptr+3, NO_CLASS, (FunctionEntryType)fncType });
         cnt++;
     }
 
     return cnt;
 }
 
+FunctionEntry* PerfFile::GetFunctionByAddress(uint64_t address, uint32_t* functionIndex)
+{
+    if (functionIndex)
+        *functionIndex = 0;
+
+    if (m_functionTable.empty())
+        return nullptr;
+
+    // we assume that m_functionTable is sorted from lower address to higher
+    // so we are able to perform binary search in O(log(n)) complexity
+
+    uint64_t ilow, ihigh, imid;
+
+    ilow = 0;
+    ihigh = m_functionTable.size() - 1;
+
+    imid = (ilow + ihigh) / 2;
+
+    // iterative binary search
+    while (ilow <= ihigh)
+    {
+        if (m_functionTable[imid].address > address)
+            ihigh = imid - 1;
+        else
+            ilow = imid + 1;
+
+        imid = (ilow + ihigh) / 2;
+    }
+
+    // the outcome may be one step higher (depending from which side we arrived), than we would like to have - we are looking for
+    // "highest lower address", i.e. for addresses 2, 5, 10, and input address 7, we return entry with address 5
+
+    if (m_functionTable[ilow].address <= address)
+    {
+        if (functionIndex)
+            *functionIndex = ilow;
+        return &m_functionTable[ilow];
+    }
+
+    if (functionIndex)
+        *functionIndex = ilow - 1;
+
+    return &m_functionTable[ilow - 1];
+}
 
 bool PerfFile::ReadAndCheckHeader()
 {
@@ -343,6 +484,7 @@ bool PerfFile::ReadData()
         switch (evt.header.type)
         {
             case PERF_RECORD_MMAP:    // mmap record
+            case PERF_RECORD_MMAP2:   // mmap record (second type)
             case PERF_RECORD_COMM:    // command record
             case PERF_RECORD_FORK:    // fork record
             case PERF_RECORD_EXIT:    // exit record
@@ -383,7 +525,14 @@ bool PerfFile::ReadData()
                     case PERF_RECORD_MMAP:
                         name = "mmap";
                         rec = create_mmap_msg(evt.mmap);
-                        LogFunc(LOG_DEBUG, "mmap, start: %.16llX, length: %llu", ((record_mmap*)rec)->start, ((record_mmap*)rec)->len);
+                        LogFunc(LOG_DEBUG, "mmap, start: 0x%.16llX, length: %llu, file: %s", ((record_mmap*)rec)->start, ((record_mmap*)rec)->len, ((record_mmap*)rec)->filename);
+                        break;
+                    case PERF_RECORD_MMAP2:
+                        name = "mmap2";
+                        rec = create_mmap_msg(evt.mmap);
+                        LogFunc(LOG_DEBUG, "mmap2, start: 0x%.16llX, length: %llu, file: %s",
+                            ((record_mmap2*)rec)->start, ((record_mmap2*)rec)->len, ((record_mmap2*)rec)->filename);
+                        m_mmaps2.push_back((record_mmap2*)rec);
                         break;
                     case PERF_RECORD_COMM:
                         name = "comm";
@@ -405,7 +554,7 @@ bool PerfFile::ReadData()
                         rec = create_sample_msg(&sample);
                         // commented out for sanity reasons (for now)
                         //LogFunc(LOG_DEBUG, "sample, ip: %.16llX, period: %llu", ((record_sample*)rec)->ip, ((record_sample*)rec)->period);
-                        //for (ji = 0; ji < sample.callchain->nr; ji++)
+                        //for (uint32_t ji = 0; ji < sample.callchain->nr; ji++)
                         //    LogFunc(LOG_DEBUG, "\t%.16llX", sample.callchain->ips[ji]);
                         break;
                 }
@@ -439,4 +588,14 @@ bool PerfFile::ReadData()
         delete loaded_data;
 
     return true;
+}
+
+void PerfFile::FillFunctionTable(std::vector<FunctionEntry> &dst)
+{
+    dst.assign(m_functionTable.begin(), m_functionTable.end());
+}
+
+void PerfFile::FillFlatProfileTable(std::vector<FlatProfileRecord> &dst)
+{
+    dst.assign(m_flatProfile.begin(), m_flatProfile.end());
 }

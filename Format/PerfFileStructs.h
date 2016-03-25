@@ -164,6 +164,22 @@ struct mmap_event
     char filename[UX_PATH_MAX];
 };
 
+struct mmap2_event
+{
+    uint32_t pid;
+    uint32_t tid;
+    uint64_t start;
+    uint64_t len;
+    uint64_t pgoff;
+    uint32_t major;
+    uint32_t minor;
+    uint64_t ino;
+    uint64_t ino_gen;
+    uint32_t prot;
+    uint32_t flags;
+    char filename[UX_PATH_MAX];
+};
+
 struct comm_event
 {
     uint32_t pid;
@@ -268,6 +284,7 @@ struct perf_event
         void* _generic;
         ip_event *ip;
         mmap_event *mmap;
+        mmap2_event *mmap2;
         comm_event *comm;
         fork_event *fork;
         exit_event *exitev;

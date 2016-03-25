@@ -1,6 +1,8 @@
 #include "General.h"
-#include "PerfInputModule.h"
 #include "PerfFile.h"
+#include "UnitIdentifiers.h"
+#include "FlatProfileStructs.h"
+#include "PerfInputModule.h"
 #include "Log.h"
 
 void(*LogFunc)(int, const char*, ...) = nullptr;
@@ -43,16 +45,15 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
     // nullify set
     IMF_CREATE(set);
 
-    // add features we support
-    //IMF_ADD(set, IMF_FLAT_PROFILE);
-    //IMF_ADD(set, IMF_CALL_GRAPH);
+    // flat profile is supported
+    IMF_ADD(set, IMF_FLAT_PROFILE);
 }
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
 {
-    PerfFile* pfile = PerfFile::Load(file, binaryFile);
+    m_pfile = PerfFile::Load(file, binaryFile);
 
-    return (pfile != nullptr);
+    return (m_pfile != nullptr);
 }
 
 void PerfInputModule::GetClassTable(std::vector<ClassEntry> &dst)
@@ -66,14 +67,14 @@ void PerfInputModule::GetFunctionTable(std::vector<FunctionEntry> &dst)
 {
     dst.clear();
 
-    // TODO
+    m_pfile->FillFunctionTable(dst);
 }
 
 void PerfInputModule::GetFlatProfileData(std::vector<FlatProfileRecord> &dst)
 {
     dst.clear();
 
-    // TODO
+    m_pfile->FillFlatProfileTable(dst);
 }
 
 void PerfInputModule::GetCallGraphMap(CallGraphMap &dst)
