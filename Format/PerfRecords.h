@@ -6,6 +6,8 @@
 // taken from linux/limits.h, aligned to fit perf format
 #define UX_PATH_MAX 4096
 
+#include "linux/perf_event.h"
+
 struct perf_event;
 struct perf_sample;
 struct mmap_event;
@@ -14,18 +16,6 @@ struct comm_event;
 struct fork_event;
 struct exit_event;
 struct ip_callchain;
-
-enum perf_event_type
-{
-    PERF_RECORD_MMAP = 1,
-    PERF_RECORD_LOST = 2,
-    PERF_RECORD_COMM = 3,
-    PERF_RECORD_EXIT = 4,
-
-    PERF_RECORD_FORK = 7,
-    PERF_RECORD_SAMPLE = 9,
-    PERF_RECORD_MMAP2 = 10
-};
 
 struct record_t
 {

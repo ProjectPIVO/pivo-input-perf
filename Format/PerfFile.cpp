@@ -508,36 +508,47 @@ bool PerfFile::ReadAttributes()
     // verify attribute struct length
     if (m_fileHeader.attr_size != sizeof(perf_file_attr))
     {
-        LogFunc(LOG_ERROR, "Supplied perf file does not have expected attribute section length");
-        return false;
+        LogFunc(LOG_ERROR, "ERROR: Supplied perf file does not have expected attribute section length! (expected: %u, actual: %u)", sizeof(perf_file_attr), m_fileHeader.attr_size);
+        // for now, allow different sizes, we need just small portion of it all
+        //return false;
     }
 
     // seek to attrs section
     fseek(m_file, (long)m_fileHeader.attrs.offset, SEEK_SET);
 
+    uint8_t* tmpMem;
     perf_file_attr f_attr;
 
     // verify attributes size - it has to be divisible to attr structs
     if ((m_fileHeader.attrs.size % sizeof(perf_file_attr)) != 0)
     {
-        LogFunc(LOG_ERROR, "Supplied perf file does not have expected attribute section length according to perf_file_attr size");
-        return false;
+        LogFunc(LOG_ERROR, "ERROR: Supplied perf file does not have expected attribute section length according to perf_file_attr size!");
+        // for now, allow different sizes, we need just small portion of it all
+        //return false;
     }
 
     uint32_t eventAttrCount = (uint32_t)(m_fileHeader.attrs.size / sizeof(perf_file_attr));
     m_eventAttr.resize(eventAttrCount);
     m_eventAttrIds.resize(eventAttrCount);
 
+    size_t allocSize = nmax(sizeof(perf_file_attr), m_fileHeader.attr_size);
+
+    tmpMem = new uint8_t[allocSize];
+
     long cur = (long)m_fileHeader.attrs.offset;
     // go through all attributes linked by header
     for (uint32_t i = 0; i < eventAttrCount; i++)
     {
         // read attribute (has to fit the structure)
-        if (fread(&f_attr, sizeof(perf_file_attr), 1, m_file) != 1)
+        if (fread(tmpMem, allocSize, 1, m_file) != 1)
         {
             LogFunc(LOG_ERROR, "Unexpected end of file while reading file attributes section");
+            delete tmpMem;
             return false;
         }
+
+        // copy memory to attribute struct
+        f_attr = *((perf_file_attr*)tmpMem);
 
         // store to vector
         m_eventAttr[i].attr = f_attr.attr;
@@ -547,6 +558,7 @@ bool PerfFile::ReadAttributes()
         if (!f_attr.attr.sample_id_all)
         {
             LogFunc(LOG_ERROR, "We need sample_id_all for further parsing!");
+            delete tmpMem;
             return false;
         }
 
@@ -556,6 +568,7 @@ bool PerfFile::ReadAttributes()
         else if (m_samplingType != f_attr.attr.sample_type)
         {
             LogFunc(LOG_ERROR, "Sampling type changed during recording, cannot continue");
+            delete tmpMem;
             return false;
         }
 
@@ -580,6 +593,8 @@ bool PerfFile::ReadAttributes()
             fseek(m_file, cur, SEEK_SET);
         }
     }
+
+    delete tmpMem;
 
     return true;
 }
