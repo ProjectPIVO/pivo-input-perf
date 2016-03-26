@@ -44,6 +44,7 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
     std::sort(pfile->m_records.begin(), pfile->m_records.end(), PerfRecordTimeSortPredicate());
 
     pfile->ResolveSymbols(binaryfilename);
+    pfile->ProcessMemoryMapping();
     pfile->FilterUsedSymbols();
 
     pfile->ProcessFlatProfile();
@@ -158,12 +159,49 @@ void PerfFile::ProcessCallGraph()
     }
 }
 
+void PerfFile::ProcessMemoryMapping()
+{
+    // automatically map all kernel addresses mapped via mmap
+    // the other symbols mapped via mmap2 are resolved lated
+    record_mmap* mm;
+
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_MMAP)
+        {
+            mm = (record_mmap*)itr;
+            AddMemoryMapping(mm->start, mm->len);
+        }
+    }
+}
+
+void PerfFile::AddMemoryMapping(uint64_t start, uint64_t length)
+{
+    m_memoryMappings.push_back(MemoryRegion(start, length));
+}
+
+bool PerfFile::IsWithinMemoryMapping(uint64_t address)
+{
+    for (MemoryRegion &itr : m_memoryMappings)
+    {
+        if (itr.first <= address && itr.first + itr.second > address)
+            return true;
+    }
+
+    return false;
+}
+
 void PerfFile::FilterUsedSymbols()
 {
     uint32_t findex;
     uint64_t tmpip;
     FunctionEntry* fet;
     record_sample* sample;
+
+    FunctionEntry nonexist;
+    nonexist.classId = NO_CLASS;
+    nonexist.functionType = FET_MISC;
+    nonexist.name = "<__unresolved_symbol__>";
 
     std::set<uint64_t> usedIPs;
 
@@ -172,6 +210,22 @@ void PerfFile::FilterUsedSymbols()
         if (itr->type == PERF_RECORD_SAMPLE)
         {
             sample = ((record_sample*)itr);
+
+            // if the symbol is not within mapped region, fake the mapping with unresolved symbol
+            if (!IsWithinMemoryMapping(sample->ip))
+            {
+                LogFunc(LOG_DEBUG, "Could not find symbol 0x%.16llX", sample->ip);
+                // add fake mapping to <-100;100> address range around sampled IP
+                if (sample->ip >= 100)
+                    nonexist.address = sample->ip - 100;
+                else
+                    nonexist.address = 0;
+
+                AddMemoryMapping(nonexist.address, 200);
+                // and insert fake symbol at that position
+                auto pos = std::lower_bound(m_symbolTable.begin(), m_symbolTable.end(), nonexist, FunctionEntrySortPredicate());
+                m_symbolTable.insert(pos, FunctionEntry(nonexist));
+            }
 
             fet = GetSymbolByAddress(sample->ip, &findex);
             if (fet && usedIPs.find(fet->address) == usedIPs.end())
@@ -182,6 +236,19 @@ void PerfFile::FilterUsedSymbols()
                 for (uint64_t i = 0; i < sample->callchain->nr; i++)
                 {
                     tmpip = sample->callchain->ips[i];
+
+                    // the same magic as before - when the symbol is not within mapped region, fake the mapping
+                    if (!IsWithinMemoryMapping(tmpip))
+                    {
+                        LogFunc(LOG_DEBUG, "Could not find symbol 0x%.16llX", tmpip);
+                        if (tmpip >= 100)
+                            nonexist.address = tmpip - 100;
+                        else
+                            nonexist.address = 0;
+                        AddMemoryMapping(nonexist.address, 200);
+                        auto pos = std::lower_bound(m_symbolTable.begin(), m_symbolTable.end(), nonexist, FunctionEntrySortPredicate());
+                        m_symbolTable.insert(pos, FunctionEntry(nonexist));
+                    }
 
                     fet = GetSymbolByAddress(tmpip, &findex);
                     if (fet && usedIPs.find(fet->address) == usedIPs.end())
@@ -234,9 +301,20 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     LogFunc(LOG_VERBOSE, "Loading debug symbols from dynamically linked libraries...");
 
     std::string libpath;
+    FunctionEntry* fet;
     // go through all mmap'd records (via mmap2) and try to load debug libraries connected with them
     for (record_mmap2* itr : m_mmaps2)
     {
+        // sort to have relevant info every turn
+        std::stable_sort(m_symbolTable.begin(), m_symbolTable.end(), FunctionEntrySortPredicate());
+
+        // if there are some symbols inside this memory region, it's possible that it has been
+        // mapped previously, just find some symbol and if it falls into mapped region,
+        // mark this region as already mapped
+        fet = GetSymbolByAddress(itr->start + itr->len - 1, nullptr);
+        if (fet && fet->address >= itr->start && fet->address < itr->start+itr->len)
+            AddMemoryMapping(itr->start, itr->len);
+
         // TODO: find more portable way to look for debug library path
         // by default, Debian-based systems stores such libs in /usr/lib/debug
         libpath = "/usr/lib/debug";
@@ -261,6 +339,9 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
             // moved by this offset
             cnt += ResolveSymbolsUsingFD(readfd, itr->start, FET_MISC);
             close(readfd);
+
+            // add to successfully mapped memory region vector
+            AddMemoryMapping(itr->start, itr->len);
         }
     }
 
@@ -314,6 +395,9 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
         laddr = strtoull(buffer, &endptr, 16);
         if (endptr - buffer + 2 > pos)
             break;
+        // some symbols may not have address
+        if (endptr - buffer < 3)
+            continue;
 
         // resolve function type
         fncType = *(endptr+1);
@@ -377,10 +461,7 @@ FunctionEntry* PerfFile::GetSymbolRecordByAddress(std::vector<FunctionEntry> &so
     // the outcome may be one step higher (depending from which side we arrived), than we would like to have - we are looking for
     // "highest lower address", i.e. for addresses 2, 5, 10, and input address 7, we return entry with address 5
 
-    if (ilow >= source.size())
-        ilow = source.size() - 1;
-
-    if (source[ilow].address <= address)
+    if (ilow < source.size() && source[ilow].address <= address)
     {
         if (functionIndex)
             *functionIndex = ilow;

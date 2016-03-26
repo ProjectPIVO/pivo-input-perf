@@ -21,6 +21,9 @@ struct PerfRecordTimeSortPredicate
     }
 };
 
+typedef std::pair<uint64_t, uint64_t> MemoryRegion;
+typedef std::vector<MemoryRegion> MemoryRegionVector;
+
 class PerfFile
 {
     public:
@@ -66,6 +69,13 @@ class PerfFile
         // creates call graph map
         void ProcessCallGraph();
 
+        // Process mmap and mmap2 samples and add appropriate ranges to search arrays
+        void ProcessMemoryMapping();
+        // adds memory mapping (mmap or mmap2) to known address ranges
+        void AddMemoryMapping(uint64_t start, uint64_t length);
+        // determines the presence of address in known region map
+        bool IsWithinMemoryMapping(uint64_t address);
+
     private:
         // perf file we read
         FILE* m_file;
@@ -85,6 +95,9 @@ class PerfFile
         std::vector<record_t*> m_records;
         // stored mmap2 events (to resolve symbols later)
         std::vector<record_mmap2*> m_mmaps2;
+
+        // vector of memory region mappings (via mmap or mmap2)
+        MemoryRegionVector m_memoryMappings;
 
         // table of addresses of functions
         std::vector<FunctionEntry> m_functionTable;
