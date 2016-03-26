@@ -305,6 +305,10 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     // go through all mmap'd records (via mmap2) and try to load debug libraries connected with them
     for (record_mmap2* itr : m_mmaps2)
     {
+        // if it's already mapped, let it go - may be duplicate
+        if (IsWithinMemoryMapping(itr->start))
+            continue;
+
         // sort to have relevant info every turn
         std::stable_sort(m_symbolTable.begin(), m_symbolTable.end(), FunctionEntrySortPredicate());
 
@@ -405,6 +409,8 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
         {
             if (fncType == 'T' || fncType == 't')
                 fncType = FET_TEXT;
+            else if (fncType == FET_READONLY || fncType == FET_READONLY_2 || fncType == FET_BSS || fncType == FET_BSS2)
+                continue;
             else
                 fncType = FET_MISC;
         }
@@ -574,10 +580,10 @@ bool PerfFile::ReadAttributes()
 
         uint64_t f_id;
         uint32_t idcount = (uint32_t)(f_attr.ids.size / sizeof(f_id));
-        m_eventAttrIds[idcount].clear();
+        m_eventAttrIds[i].clear();
 
         // go through all assigned IDs and read them
-        if (idcount > 0)
+        if (idcount > 0 && f_attr.ids.size != (uint32_t)(-1))
         {
             cur = ftell(m_file);
             fseek(m_file, (long)f_attr.ids.offset, SEEK_SET);
@@ -672,6 +678,8 @@ bool PerfFile::ReadData()
         return false;
     }
     */
+
+    fseek(m_file, m_fileHeader.data.offset, SEEK_SET);
 
     perf_event evt;
     uint8_t* loaded_data = nullptr;

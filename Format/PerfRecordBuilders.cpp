@@ -120,9 +120,9 @@ int perf_event__parse_sample(perf_event *event, uint64_t type, bool sample_id_al
         return -1;
     }
 
+    data->callchain = new ip_callchain;
     if (type & PERF_SAMPLE_CALLCHAIN)
     {
-        data->callchain = new ip_callchain;
         uint32_t count = (uint32_t)((ip_callchain*)array)->nr;
 
         data->callchain->nr = count;
@@ -131,6 +131,11 @@ int perf_event__parse_sample(perf_event *event, uint64_t type, bool sample_id_al
             data->callchain->ips[it] = ( (uint64_t*)&((ip_callchain*)array)->ips )[it];
 
         array += 1 + count;
+    }
+    else
+    {
+        data->callchain->nr = 0;
+        data->callchain->ips = nullptr;
     }
 
     if (type & PERF_SAMPLE_RAW)
