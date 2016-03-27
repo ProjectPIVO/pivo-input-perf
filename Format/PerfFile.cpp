@@ -77,7 +77,7 @@ void PerfFile::ProcessFlatProfile()
     uint32_t lastFindex = 0;
     double baseTime;
 
-    uint32_t findex;
+    uint32_t findex, childindex;
     for (record_t* itr : m_records)
     {
         if (itr->type == PERF_RECORD_SAMPLE)
@@ -95,12 +95,36 @@ void PerfFile::ProcessFlatProfile()
                     baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
                     m_flatProfile[findex].timeTotal += baseTime;
                     m_flatProfile[lastFindex].timeTotal += baseTime;
+
+                    // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
+                    // and self as second record
+                    for (uint64_t i = 2; i < sample->callchain->nr; i++)
+                    {
+                        tmpip = sample->callchain->ips[i];
+
+                        fet = GetFunctionByAddress(tmpip, &childindex);
+                        // also exclude kernel calls for now
+                        if (fet && fet->functionType != FET_KERNEL)
+                            m_flatProfile[childindex].timeTotalInclusive += baseTime;
+                    }
                 }
 
                 lastTime = sample->header.time;
                 lastFindex = findex;
             }
         }
+    }
+
+    double maxInclusiveTime = 0.01f;
+    for (int i = 0; i < m_flatProfile.size())
+    {
+        if (m_flatProfile[i].timeTotalInclusive > maxInclusiveTime)
+            maxInclusiveTime = m_flatProfile[i].timeTotalInclusive;
+    }
+
+    for (int i = 0; i < m_flatProfile.size())
+    {
+        m_flatProfile[i].timeTotalInclusivePct = m_flatProfile[i].timeTotalInclusive / maxInclusiveTime;
     }
 }
 
@@ -533,11 +557,12 @@ bool PerfFile::ReadAttributes()
         //return false;
     }
 
-    uint32_t eventAttrCount = (uint32_t)(m_fileHeader.attrs.size / sizeof(perf_file_attr));
+    size_t allocSize = nmax(sizeof(perf_file_attr), m_fileHeader.attr_size);
+    size_t scaleSize = nmin(sizeof(perf_file_attr), m_fileHeader.attr_size);
+
+    uint32_t eventAttrCount = (uint32_t)(m_fileHeader.attrs.size / scaleSize);
     m_eventAttr.resize(eventAttrCount);
     m_eventAttrIds.resize(eventAttrCount);
-
-    size_t allocSize = nmax(sizeof(perf_file_attr), m_fileHeader.attr_size);
 
     tmpMem = new uint8_t[allocSize];
 

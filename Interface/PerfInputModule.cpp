@@ -50,6 +50,9 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
 
     // call graph is supported
     IMF_ADD(set, IMF_CALL_GRAPH);
+
+    // we calculate inclusive time using our own mechanisms
+    IMF_ADD(set, IMF_INCLUSIVE_TIME);
 }
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
