@@ -61,6 +61,8 @@ void PerfFile::ProcessFlatProfile()
 
     FlatProfileRecord *fp;
 
+    LogFunc(LOG_INFO, "Processing flat profile data...");
+
     // prepare flat profile table, it will match function table at first stage of filling
     for (int i = 0; i < m_functionTable.size(); i++)
     {
@@ -115,6 +117,8 @@ void PerfFile::ProcessFlatProfile()
         }
     }
 
+    LogFunc(LOG_VERBOSE, "Finalizing inclusive time calculation...");
+
     double maxInclusiveTime = 0.01;
     for (size_t i = 0; i < m_flatProfile.size(); i++)
     {
@@ -133,6 +137,8 @@ void PerfFile::ProcessCallGraph()
     FlatProfileRecord *fp;
     record_sample* sample;
     FunctionEntry* fet;
+
+    LogFunc(LOG_INFO, "Processing call graph...");
 
     // nullify call counts
     for (int i = 0; i < m_functionTable.size(); i++)
@@ -185,6 +191,8 @@ void PerfFile::ProcessCallGraph()
 
 void PerfFile::ProcessMemoryMapping()
 {
+    LogFunc(LOG_VERBOSE, "Processing memory mappings...");
+
     // automatically map all kernel addresses mapped via mmap
     // the other symbols mapped via mmap2 are resolved lated
     record_mmap* mm;
@@ -226,6 +234,8 @@ void PerfFile::FilterUsedSymbols()
     nonexist.classId = NO_CLASS;
     nonexist.functionType = FET_MISC;
     nonexist.name = "<__unresolved_symbol__>";
+
+    LogFunc(LOG_INFO, "Filtering symbols...");
 
     std::set<uint64_t> usedIPs;
 
