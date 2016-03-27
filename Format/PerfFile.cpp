@@ -96,13 +96,13 @@ void PerfFile::ProcessFlatProfile()
                     m_flatProfile[findex].timeTotal += baseTime;
                     m_flatProfile[lastFindex].timeTotal += baseTime;
 
+                    // now calculate inclusive time
+
                     // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
                     // and self as second record
                     for (uint64_t i = 2; i < sample->callchain->nr; i++)
                     {
-                        tmpip = sample->callchain->ips[i];
-
-                        fet = GetFunctionByAddress(tmpip, &childindex);
+                        fet = GetFunctionByAddress(sample->callchain->ips[i], &childindex);
                         // also exclude kernel calls for now
                         if (fet && fet->functionType != FET_KERNEL)
                             m_flatProfile[childindex].timeTotalInclusive += baseTime;
@@ -115,14 +115,14 @@ void PerfFile::ProcessFlatProfile()
         }
     }
 
-    double maxInclusiveTime = 0.01f;
-    for (int i = 0; i < m_flatProfile.size())
+    double maxInclusiveTime = 0.01;
+    for (size_t i = 0; i < m_flatProfile.size(); i++)
     {
         if (m_flatProfile[i].timeTotalInclusive > maxInclusiveTime)
             maxInclusiveTime = m_flatProfile[i].timeTotalInclusive;
     }
 
-    for (int i = 0; i < m_flatProfile.size())
+    for (size_t i = 0; i < m_flatProfile.size(); i++)
     {
         m_flatProfile[i].timeTotalInclusivePct = m_flatProfile[i].timeTotalInclusive / maxInclusiveTime;
     }
