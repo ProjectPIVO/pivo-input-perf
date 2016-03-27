@@ -297,7 +297,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     LogFunc(LOG_VERBOSE, "Loading debug symbols from application binary...");
 
     // build nm binary call parameters
-    const char *argv[] = {NM_BINARY_PATH, "-a", "-C", binaryFilename, 0};
+    const char *argv[] = {NM_BINARY_PATH, "-C", binaryFilename, 0};
 
     // retrieve symbols from binary file
     int readfd = ForkProcessForReading(argv);
@@ -357,7 +357,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
         LogFunc(LOG_VERBOSE, "Loading debug symbols from %s...", libpath.c_str());
 
         // substitute binary parameter in "nm" command line
-        argv[3] = libpath.c_str();
+        argv[2] = libpath.c_str();
 
         readfd = ForkProcessForReading(argv);
         if (readfd > 0)
