@@ -53,6 +53,9 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
 
     // we calculate inclusive time using our own mechanisms
     IMF_ADD(set, IMF_INCLUSIVE_TIME);
+
+    // call tree is supported
+    IMF_ADD(set, IMF_CALL_TREE);
 }
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
@@ -88,4 +91,11 @@ void PerfInputModule::GetCallGraphMap(CallGraphMap &dst)
     dst.clear();
 
     m_pfile->FillCallGraphMap(dst);
+}
+
+void PerfInputModule::GetCallTreeMap(CallTreeMap &dst)
+{
+    dst.clear();
+
+    m_pfile->FillCallTreeMap(dst);
 }

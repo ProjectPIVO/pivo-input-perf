@@ -9,6 +9,7 @@
 
 #include <set>
 #include <algorithm>
+#include <stack>
 
 PerfFile::PerfFile()
 {
@@ -49,6 +50,7 @@ PerfFile* PerfFile::Load(const char* filename, const char* binaryfilename)
 
     pfile->ProcessFlatProfile();
     pfile->ProcessCallGraph();
+    pfile->ProcessCallTree();
 
     fclose(pf);
 
@@ -111,9 +113,10 @@ void PerfFile::ProcessFlatProfile()
                     }
                 }
 
-                lastTime = sample->header.time;
                 lastFindex = findex;
             }
+
+            lastTime = sample->header.time;
         }
     }
 
@@ -185,6 +188,168 @@ void PerfFile::ProcessCallGraph()
                     }
                 }
             }
+        }
+    }
+}
+
+CallTreeNode* PerfFile::CreateCallTreeNode(uint32_t functionId, CallTreeNode* childOf)
+{
+    CallTreeNode* node = new CallTreeNode;
+    node->functionId = functionId;
+    node->timeTotal = 0.0;
+    node->timeTotalPct = 0.0;
+    node->sampleCount = 0;
+    node->parent = childOf;
+    return node;
+}
+
+CallTreeNode* PerfFile::InsertIntoCallTree(std::vector<uint32_t> &path, uint32_t finalFunctionId)
+{
+    // on zero-length path we have nothing to do
+    if (path.size() == 0)
+        return nullptr;
+
+    uint32_t i = path.size();
+    CallTreeNode* curNode = nullptr;
+
+    // traverse all points in path
+    do
+    {
+        // a loop in such form will allow us to iterate from end to beginning, not
+        // excluding zero and not subtract from zero (which would cause overflow)
+
+        i--;
+
+        // if no node selected yet, that means, we need to select root node
+        if (curNode == nullptr)
+        {
+            // find root node in calltree map of root nodes
+            auto itr = m_callTree.find(path[i]);
+            // if not found, create
+            if (itr == m_callTree.end())
+            {
+                curNode = CreateCallTreeNode(path[i], nullptr);
+                m_callTree[path[i]] = curNode;
+            }
+            else
+                curNode = itr->second;
+        }
+        else // otherwise search in current node children map
+        {
+            // find node in children map
+            auto itr = curNode->children.find(path[i]);
+            // if not found, create
+            if (itr == curNode->children.end())
+            {
+                curNode->children[path[i]] = CreateCallTreeNode(path[i], curNode);
+                curNode = curNode->children[path[i]];
+            }
+            else
+                curNode = itr->second;
+        }
+    }
+    while (i != 0);
+
+    return curNode;
+}
+
+void PerfFile::AccumulateCallTreeTime(CallTreeNode* node, double addTime, bool addSample)
+{
+    // roll up to root node and add "inclusive" time
+    CallTreeNode* tmp = node;
+    while (tmp != nullptr)
+    {
+        tmp->timeTotal += addTime;
+        if (addSample)
+            tmp->sampleCount++;
+        tmp = tmp->parent;
+    }
+}
+
+void PerfFile::ProcessCallTree()
+{
+    record_sample* sample;
+    FunctionEntry* fet;
+    std::vector<uint32_t> callPath;
+    CallTreeNode* ctn;
+    CallTreeNode* lastctn = nullptr;
+
+    uint64_t lastTime = 0;
+    double baseTime;
+
+    LogFunc(LOG_INFO, "Processing call tree...");
+
+    uint32_t findex, childindex;
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            sample = ((record_sample*)itr);
+
+            fet = GetFunctionByAddress(sample->ip, &findex);
+            // for now, exclude kernel symbols from output (for sanity reasons)
+            if (fet && fet->functionType != FET_KERNEL)
+            {
+                callPath.clear();
+
+                callPath.push_back(findex);
+
+                // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
+                // and self as second record
+                for (uint64_t i = 2; i < sample->callchain->nr; i++)
+                {
+                    fet = GetFunctionByAddress(sample->callchain->ips[i], &childindex);
+                    if (fet)
+                        callPath.push_back(childindex);
+                }
+
+                // insert path into call tree
+                ctn = InsertIntoCallTree(callPath, findex);
+                if (ctn)
+                {
+                    if (lastTime != 0)
+                    {
+                        // time in perf file format is in nanoseconds
+                        baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
+
+                        AccumulateCallTreeTime(ctn, baseTime, true);
+                        AccumulateCallTreeTime(lastctn, baseTime, true);
+                    }
+
+                    lastTime = sample->header.time;
+                    lastctn = ctn;
+                }
+            }
+        }
+    }
+
+    // root nodes always have the largest time portions
+    double maxTime = 0.0;
+    for (auto itr : m_callTree)
+    {
+        if (itr.second->timeTotal > maxTime)
+            maxTime = itr.second->timeTotal;
+    }
+
+    if (maxTime > 0.0)
+    {
+        // traverse using iterative DFS to count time precentages
+
+        CallTreeNode* curr;
+        std::stack<CallTreeNode*> dstack;
+        for (auto itr : m_callTree)
+            dstack.push(itr.second);
+
+        while (!dstack.empty())
+        {
+            curr = dstack.top();
+            dstack.pop();
+
+            curr->timeTotalPct = curr->timeTotal / maxTime;
+
+            // it's a tree, we don't need to check traversal state
+            for (auto itr : curr->children)
+                dstack.push(itr.second);
         }
     }
 }
@@ -854,4 +1019,11 @@ void PerfFile::FillCallGraphMap(CallGraphMap &dst)
     for (CallGraphMap::iterator itr = m_callGraph.begin(); itr != m_callGraph.end(); ++itr)
         for (std::map<uint32_t, uint64_t>::iterator sitr = itr->second.begin(); sitr != itr->second.end(); ++sitr)
             dst[itr->first][sitr->first] = sitr->second;
+}
+
+void PerfFile::FillCallTreeMap(CallTreeMap &dst)
+{
+    // copy just addressess - it will remain the same, do not copy memory contents
+    for (CallTreeMap::iterator itr = m_callTree.begin(); itr != m_callTree.end(); ++itr)
+        dst[itr->first] = itr->second;
 }

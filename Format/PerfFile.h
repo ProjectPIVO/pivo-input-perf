@@ -6,6 +6,7 @@
 #include "UnitIdentifiers.h"
 #include "FlatProfileStructs.h"
 #include "CallGraphStructs.h"
+#include "CallTreeStructs.h"
 
 #include <set>
 
@@ -36,6 +37,8 @@ class PerfFile
         void FillFlatProfileTable(std::vector<FlatProfileRecord> &dst);
         // fills call graph map with gathered data
         void FillCallGraphMap(CallGraphMap &dst);
+        // fills call tree map with gathered data
+        void FillCallTreeMap(CallTreeMap &dst);
 
     protected:
         // private constructor; use PerfFile::Load to instantiate this class
@@ -68,6 +71,15 @@ class PerfFile
         void ProcessFlatProfile();
         // creates call graph map
         void ProcessCallGraph();
+        // creates call tree
+        void ProcessCallTree();
+
+        // creates empty an nullified call tree node
+        CallTreeNode* CreateCallTreeNode(uint32_t functionId, CallTreeNode* childOf = nullptr);
+        // inserts node (if needed) into call tree and returns CallTreeNode instance
+        CallTreeNode* InsertIntoCallTree(std::vector<uint32_t> &path, uint32_t finalFunctionId);
+        // adds time to whole call chain
+        void AccumulateCallTreeTime(CallTreeNode* node, double addTime, bool addSample = false);
 
         // Process mmap and mmap2 samples and add appropriate ranges to search arrays
         void ProcessMemoryMapping();
@@ -108,6 +120,8 @@ class PerfFile
         std::vector<FlatProfileRecord> m_flatProfile;
         // call graph map
         CallGraphMap m_callGraph;
+        // call tree set (root nodes)
+        CallTreeMap m_callTree;
 };
 
 #endif
