@@ -10,6 +10,9 @@
 
 #include <set>
 
+// nodes with less than this value of inclusive time percentage will be excluded
+#define CALL_TREE_INCLUSIVE_TIME_THRESHOLD 0.0001
+
 // currently supported perf file version is 2 (magic PERFILE2)
 const char perfFileMagic[PERF_FILE_MAGIC_LENGTH] = { 'P', 'E', 'R', 'F', 'I', 'L', 'E', '2' };
 

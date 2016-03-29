@@ -344,6 +344,15 @@ void PerfFile::ProcessCallTree()
 
             curr->timeTotalPct = curr->timeTotal / maxTime;
 
+            // exclude function calls with less than THRESHOLD percentage of inclusive time
+            if (curr->timeTotalPct < CALL_TREE_INCLUSIVE_TIME_THRESHOLD)
+            {
+                if (curr->parent)
+                    curr->parent->children.erase(curr->functionId);
+                else
+                    m_callTree.erase(curr->functionId);
+            }
+
             // it's a tree, we don't need to check traversal state
             for (auto itr : curr->children)
                 dstack.push(itr.second);
