@@ -323,13 +323,10 @@ void PerfFile::ProcessCallTree()
         }
     }
 
-    // root nodes always have the largest time portions
+    // root nodes always have the largest inclusive time portions
     double maxTime = 0.0;
     for (auto itr : m_callTree)
-    {
-        if (itr.second->timeTotal > maxTime)
-            maxTime = itr.second->timeTotal;
-    }
+            maxTime += itr.second->timeTotal;
 
     if (maxTime > 0.0)
     {
