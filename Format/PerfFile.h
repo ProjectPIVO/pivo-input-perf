@@ -25,6 +25,14 @@ struct PerfRecordTimeSortPredicate
     }
 };
 
+// to have memory regions assigned with filenames even though the files weren't loaded
+struct MemoryRegionFile
+{
+    uint64_t base;
+    uint64_t length;
+    std::string filename;
+};
+
 typedef std::pair<uint64_t, uint64_t> MemoryRegion;
 typedef std::vector<MemoryRegion> MemoryRegionVector;
 
@@ -91,6 +99,11 @@ class PerfFile
         // determines the presence of address in known region map
         bool IsWithinMemoryMapping(uint64_t address);
 
+        // adds filename for memory region
+        void AddFilenameForMapping(uint64_t address, uint64_t length, const char* filename);
+        // retrieves filename for mapped region if any
+        const char* RetrieveFilenameForMapping(uint64_t address);
+
     private:
         // perf file we read
         FILE* m_file;
@@ -110,6 +123,8 @@ class PerfFile
         std::vector<record_t*> m_records;
         // stored mmap2 events (to resolve symbols later)
         std::vector<record_mmap2*> m_mmaps2;
+        // all stored address-length-filename mappings
+        std::vector<MemoryRegionFile> m_mmapFiles;
 
         // vector of memory region mappings (via mmap or mmap2)
         MemoryRegionVector m_memoryMappings;

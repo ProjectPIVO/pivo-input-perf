@@ -10,6 +10,8 @@
 #include <set>
 #include <algorithm>
 #include <stack>
+#include <sstream>
+#include <iomanip>
 
 PerfFile::PerfFile()
 {
@@ -360,13 +362,32 @@ void PerfFile::ProcessCallTree()
     }
 }
 
+void PerfFile::AddFilenameForMapping(uint64_t address, uint64_t length, const char* filename)
+{
+    m_mmapFiles.push_back({ address, length, filename });
+}
+
+const char* PerfFile::RetrieveFilenameForMapping(uint64_t address)
+{
+    for (MemoryRegionFile itr : m_mmapFiles)
+    {
+        if (address >= itr.base && address < itr.base+itr.length)
+            return itr.filename.c_str();
+    }
+
+    return nullptr;
+}
+
 void PerfFile::ProcessMemoryMapping()
 {
     LogFunc(LOG_VERBOSE, "Processing memory mappings...");
 
     // automatically map all kernel addresses mapped via mmap
-    // the other symbols mapped via mmap2 are resolved lated
+    // the other symbols mapped via mmap2 are resolved later
     record_mmap* mm;
+    record_mmap2* mm2;
+    char* tmp;
+    int i;
 
     for (record_t* itr : m_records)
     {
@@ -374,6 +395,28 @@ void PerfFile::ProcessMemoryMapping()
         {
             mm = (record_mmap*)itr;
             AddMemoryMapping(mm->start, mm->len);
+            if (!RetrieveFilenameForMapping(mm->start))
+            {
+                for (i = strlen(mm->filename)-1; i > 0; i--)
+                    if (mm->filename[i] == '/' || mm->filename[i] == '\\')
+                        break;
+                if (i > 0)
+                    i++;
+                AddFilenameForMapping(mm->start, mm->len, &mm->filename[i]);
+            }
+        }
+        else if (itr->type == PERF_RECORD_MMAP2)
+        {
+            mm2 = (record_mmap2*)itr;
+            if (!RetrieveFilenameForMapping(mm2->start))
+            {
+                for (i = strlen(mm2->filename)-1; i > 0; i--)
+                    if (mm2->filename[i] == '/' || mm2->filename[i] == '\\')
+                        break;
+                if (i > 0)
+                    i++;
+                AddFilenameForMapping(mm2->start, mm2->len, &mm2->filename[i]);
+            }
         }
     }
 }
@@ -400,6 +443,7 @@ void PerfFile::FilterUsedSymbols()
     uint64_t tmpip;
     FunctionEntry* fet;
     record_sample* sample;
+    std::stringstream stream;
 
     FunctionEntry nonexist;
     nonexist.classId = NO_CLASS;
@@ -425,6 +469,19 @@ void PerfFile::FilterUsedSymbols()
                     nonexist.address = sample->ip - 100;
                 else
                     nonexist.address = 0;
+
+                const char* memname = RetrieveFilenameForMapping(sample->ip);
+                if (memname != nullptr)
+                {
+                    nonexist.name = std::string(memname);
+                    stream << std::setfill('0') << std::setw(16)
+                           << std::hex << sample->ip;
+                    nonexist.name += std::string("::0x") + stream.str().c_str();
+                    stream.str(std::string());
+                    stream.clear();
+                }
+                else
+                    nonexist.name = "<__unresolved_symbol__>";
 
                 AddMemoryMapping(nonexist.address, 200);
                 // and insert fake symbol at that position
