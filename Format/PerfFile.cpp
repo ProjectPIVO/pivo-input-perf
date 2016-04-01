@@ -369,7 +369,7 @@ void PerfFile::AddFilenameForMapping(uint64_t address, uint64_t length, const ch
 
 const char* PerfFile::RetrieveFilenameForMapping(uint64_t address)
 {
-    for (MemoryRegionFile itr : m_mmapFiles)
+    for (MemoryRegionFile &itr : m_mmapFiles)
     {
         if (address >= itr.base && address < itr.base+itr.length)
             return itr.filename.c_str();
