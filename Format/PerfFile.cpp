@@ -162,7 +162,7 @@ void PerfFile::ProcessCallGraph()
 
             fet = GetFunctionByAddress(sample->ip, &findex);
             // for now, exclude kernel symbols from output (for sanity reasons)
-            if (fet && fet->functionType != FET_KERNEL)
+            if (fet /*&& fet->functionType != FET_KERNEL*/)
             {
                 dstIndex = findex;
 
@@ -174,7 +174,7 @@ void PerfFile::ProcessCallGraph()
 
                     fet = GetFunctionByAddress(tmpip, &srcIndex);
                     // also exclude kernel calls for now
-                    if (fet && fet->functionType != FET_KERNEL)
+                    if (fet /*&& fet->functionType != FET_KERNEL*/)
                     {
                         if (m_callGraph.find(srcIndex) == m_callGraph.end() ||
                             m_callGraph[srcIndex].find(dstIndex) == m_callGraph[srcIndex].end())
