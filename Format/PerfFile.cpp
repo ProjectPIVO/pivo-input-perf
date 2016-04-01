@@ -460,6 +460,8 @@ void PerfFile::FilterUsedSymbols()
         {
             sample = ((record_sample*)itr);
 
+            nonexist.name = "<__unresolved_symbol__>";
+
             // if the symbol is not within mapped region, fake the mapping with unresolved symbol
             if (!IsWithinMemoryMapping(sample->ip))
             {
@@ -481,7 +483,13 @@ void PerfFile::FilterUsedSymbols()
                     stream.clear();
                 }
                 else
-                    nonexist.name = "<__unresolved_symbol__>";
+                {
+                    stream << std::setfill('0') << std::setw(16)
+                           << std::hex << sample->ip;
+                    nonexist.name = std::string("0x") + stream.str().c_str();
+                    stream.str(std::string());
+                    stream.clear();
+                }
 
                 AddMemoryMapping(nonexist.address, 200);
                 // and insert fake symbol at that position
@@ -499,6 +507,8 @@ void PerfFile::FilterUsedSymbols()
                 {
                     tmpip = sample->callchain->ips[i];
 
+                    nonexist.name = "<__unresolved_symbol__>";
+
                     // the same magic as before - when the symbol is not within mapped region, fake the mapping
                     if (!IsWithinMemoryMapping(tmpip))
                     {
@@ -507,6 +517,26 @@ void PerfFile::FilterUsedSymbols()
                             nonexist.address = tmpip - 100;
                         else
                             nonexist.address = 0;
+
+                        const char* memname = RetrieveFilenameForMapping(tmpip);
+                        if (memname != nullptr)
+                        {
+                            nonexist.name = std::string(memname);
+                            stream << std::setfill('0') << std::setw(16)
+                                   << std::hex << tmpip;
+                            nonexist.name += std::string("::0x") + stream.str().c_str();
+                            stream.str(std::string());
+                            stream.clear();
+                        }
+                        else
+                        {
+                            stream << std::setfill('0') << std::setw(16)
+                                   << std::hex << tmpip;
+                            nonexist.name = std::string("0x") + stream.str().c_str();
+                            stream.str(std::string());
+                            stream.clear();
+                        }
+
                         AddMemoryMapping(nonexist.address, 200);
                         auto pos = std::lower_bound(m_symbolTable.begin(), m_symbolTable.end(), nonexist, FunctionEntrySortPredicate());
                         m_symbolTable.insert(pos, FunctionEntry(nonexist));
