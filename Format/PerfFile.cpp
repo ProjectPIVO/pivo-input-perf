@@ -561,17 +561,22 @@ void PerfFile::FilterUsedSymbols()
 void PerfFile::ResolveSymbols(const char* binaryFilename)
 {
     int cnt = 0;
+    int ncnt;
 
     LogFunc(LOG_VERBOSE, "Loading debug symbols from application binary...");
 
     // build nm binary call parameters
     const char *argv[] = {NM_BINARY_PATH, "-C", binaryFilename, 0};
+    // next argv set for resolving dynamic symbols
+    const char *argv_dyn[] = {NM_BINARY_PATH, "-C", "-D", binaryFilename, 0};
 
     // retrieve symbols from binary file
     int readfd = ForkProcessForReading(argv);
     if (readfd > 0)
     {
-        cnt += ResolveSymbolsUsingFD(readfd);
+        ncnt = ResolveSymbolsUsingFD(readfd);
+        LogFunc(LOG_VERBOSE, "Loaded %i symbols", ncnt);
+        cnt += ncnt;
         close(readfd);
     }
     else
@@ -584,7 +589,9 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     if (kallsymfile)
     {
         readfd = fileno(kallsymfile);
-        cnt += ResolveSymbolsUsingFD(readfd, 0, FET_KERNEL);
+        ncnt = ResolveSymbolsUsingFD(readfd, 0, FET_KERNEL);
+        LogFunc(LOG_VERBOSE, "Loaded %i symbols", ncnt);
+        cnt += ncnt;
         fclose(kallsymfile);
     }
     else
@@ -616,24 +623,43 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
         libpath = "/usr/lib/debug";
         libpath += itr->filename;
 
+        bool useDynamic = false;
         FILE* tst = fopen(libpath.c_str(), "r");
         if (!tst)
-            continue;
+        {
+            tst = fopen(itr->filename, "r");
+            if (!tst)
+                continue;
+
+            useDynamic = true;
+            libpath = itr->filename;
+        }
 
         fclose(tst);
 
         LogFunc(LOG_VERBOSE, "Loading debug symbols from %s...", libpath.c_str());
 
         // substitute binary parameter in "nm" command line
-        argv[2] = libpath.c_str();
 
-        readfd = ForkProcessForReading(argv);
+        if (useDynamic)
+        {
+            argv_dyn[3] = libpath.c_str();
+            readfd = ForkProcessForReading(argv_dyn);
+        }
+        else
+        {
+            argv[2] = libpath.c_str();
+            readfd = ForkProcessForReading(argv);
+        }
+
         if (readfd > 0)
         {
             // the base address is mandatory here, since the memory is mmap'd to
             // another offset in virtual address space, thus all symbols are
             // moved by this offset
-            cnt += ResolveSymbolsUsingFD(readfd, itr->start, FET_MISC);
+            ncnt = ResolveSymbolsUsingFD(readfd, itr->start, FET_MISC);
+            LogFunc(LOG_VERBOSE, "Loaded %i symbols", ncnt);
+            cnt += ncnt;
             close(readfd);
 
             // add to successfully mapped memory region vector
