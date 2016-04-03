@@ -315,13 +315,16 @@ void PerfFile::ProcessCallTree()
                         baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
 
                         AccumulateCallTreeTime(ctn, baseTime, true);
-                        AccumulateCallTreeTime(lastctn, baseTime, true);
+                        if (lastctn != nullptr)
+                            AccumulateCallTreeTime(lastctn, baseTime, true);
                     }
-
-                    lastTime = sample->header.time;
-                    lastctn = ctn;
                 }
             }
+            else
+                ctn = nullptr;
+
+            lastctn = ctn;
+            lastTime = sample->header.time;
         }
     }
 
