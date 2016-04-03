@@ -604,6 +604,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
 
     std::string libpath;
     FunctionEntry* fet;
+    uint64_t memstart;
     // go through all mmap'd records (via mmap2) and try to load debug libraries connected with them
     for (record_mmap2* itr : m_mmaps2)
     {
@@ -613,6 +614,8 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
 
         // sort to have relevant info every turn
         std::stable_sort(m_symbolTable.begin(), m_symbolTable.end(), FunctionEntrySortPredicate());
+
+        memstart = itr->start;
 
         // if there are some symbols inside this memory region, it's possible that it has been
         // mapped previously, just find some symbol and if it falls into mapped region,
@@ -660,7 +663,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
             // the base address is mandatory here, since the memory is mmap'd to
             // another offset in virtual address space, thus all symbols are
             // moved by this offset
-            ncnt = ResolveSymbolsUsingFD(readfd, itr->start, FET_MISC);
+            ncnt = ResolveSymbolsUsingFD(readfd, memstart, FET_MISC);
             LogFunc(LOG_VERBOSE, "Loaded %i symbols", ncnt);
             cnt += ncnt;
             close(readfd);
@@ -684,7 +687,7 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
     // Read from child’s stdout
     int res, pos, cnt;
     char c;
-    uint64_t laddr;
+    uint64_t laddr, addrStart;
     char* endptr;
     char fncType;
 
@@ -726,12 +729,16 @@ int PerfFile::ResolveSymbolsUsingFD(int fd, uint64_t baseAddress, FunctionEntryT
 
         // resolve function type
         fncType = *(endptr+1);
+
+        addrStart = baseAddress;
+
+        if (fncType != FET_TEXT && fncType != FET_TEXT_2 && fncType != FET_WEAK && fncType != FET_WEAK_2)
+            continue;
+
         if (overrideType == FET_DONTCARE)
         {
-            if (fncType == 'T' || fncType == 't')
+            if (fncType == FET_TEXT || fncType == FET_TEXT_2)
                 fncType = FET_TEXT;
-            else if (fncType == FET_READONLY || fncType == FET_READONLY_2 || fncType == FET_BSS || fncType == FET_BSS2)
-                continue;
             else
                 fncType = FET_MISC;
         }
