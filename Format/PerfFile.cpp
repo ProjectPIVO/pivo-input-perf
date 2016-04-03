@@ -622,7 +622,11 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
         // mark this region as already mapped
         fet = GetSymbolByAddress(itr->start + itr->len - 1, nullptr);
         if (fet && fet->address >= itr->start && fet->address < itr->start+itr->len)
+        {
             AddMemoryMapping(itr->start, itr->len);
+            // do not resolve any further, collisions possible
+            continue;
+        }
 
         // TODO: find more portable way to look for debug library path
         // by default, Debian-based systems stores such libs in /usr/lib/debug
