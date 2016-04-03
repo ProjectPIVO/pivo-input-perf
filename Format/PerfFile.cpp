@@ -79,9 +79,6 @@ void PerfFile::ProcessFlatProfile()
 
     record_sample* sample;
     FunctionEntry* fet;
-    uint64_t lastTime = 0;
-    uint32_t lastFindex = 0;
-    double baseTime;
 
     uint32_t findex, childindex;
     for (record_t* itr : m_records)
@@ -94,31 +91,20 @@ void PerfFile::ProcessFlatProfile()
             // for now, exclude kernel symbols (for sanity reasons)
             if (fet && fet->functionType != FET_KERNEL)
             {
-                if (lastTime != 0)
+                m_flatProfile[findex].timeTotal += 1.0;
+
+                // now calculate inclusive time
+
+                // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
+                // and self as second record
+                for (uint64_t i = 2; i < sample->callchain->nr; i++)
                 {
-                    // time in perf file format is in nanoseconds (based on system uptime, but
-                    // that is not important, since we need only relative differences)
-                    baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
-                    m_flatProfile[findex].timeTotal += baseTime;
-                    m_flatProfile[lastFindex].timeTotal += baseTime;
-
-                    // now calculate inclusive time
-
-                    // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
-                    // and self as second record
-                    for (uint64_t i = 2; i < sample->callchain->nr; i++)
-                    {
-                        fet = GetFunctionByAddress(sample->callchain->ips[i], &childindex);
-                        // also exclude kernel calls for now
-                        if (fet && fet->functionType != FET_KERNEL)
-                            m_flatProfile[childindex].timeTotalInclusive += baseTime;
-                    }
+                    fet = GetFunctionByAddress(sample->callchain->ips[i], &childindex);
+                    // also exclude kernel calls for now
+                    if (fet && fet->functionType != FET_KERNEL)
+                        m_flatProfile[childindex].timeTotalInclusive += 1.0;
                 }
-
-                lastFindex = findex;
             }
-
-            lastTime = sample->header.time;
         }
     }
 
@@ -274,10 +260,6 @@ void PerfFile::ProcessCallTree()
     FunctionEntry* fet;
     std::vector<uint32_t> callPath;
     CallTreeNode* ctn;
-    CallTreeNode* lastctn = nullptr;
-
-    uint64_t lastTime = 0;
-    double baseTime;
 
     LogFunc(LOG_INFO, "Processing call tree...");
 
@@ -308,23 +290,8 @@ void PerfFile::ProcessCallTree()
                 // insert path into call tree
                 ctn = InsertIntoCallTree(callPath, findex);
                 if (ctn)
-                {
-                    if (lastTime != 0)
-                    {
-                        // time in perf file format is in nanoseconds
-                        baseTime = ( ((double)(sample->header.time - lastTime)) / 2.0 ) / 1000000000.0;
-
-                        AccumulateCallTreeTime(ctn, baseTime, true);
-                        if (lastctn != nullptr)
-                            AccumulateCallTreeTime(lastctn, baseTime, true);
-                    }
-                }
+                    AccumulateCallTreeTime(ctn, 1.0, true);
             }
-            else
-                ctn = nullptr;
-
-            lastctn = ctn;
-            lastTime = sample->header.time;
         }
     }
 
