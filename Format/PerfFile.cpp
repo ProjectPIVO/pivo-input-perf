@@ -300,6 +300,9 @@ void PerfFile::ProcessCallTree()
     for (auto itr : m_callTree)
             maxTime += itr.second->timeTotal;
 
+    LogFunc(LOG_VERBOSE, "Thresholding sampled paths...");
+    LogFunc(LOG_VERBOSE, "Total samples: %u, threshold: %u", (uint64_t)maxTime, (uint64_t)(maxTime*CALL_TREE_INCLUSIVE_TIME_THRESHOLD));
+
     if (maxTime > 0.0)
     {
         // traverse using iterative DFS to count time precentages
@@ -803,6 +806,10 @@ bool PerfFile::ReadAndCheckHeader()
 
 bool PerfFile::ReadAttributes()
 {
+    LogFunc(LOG_VERBOSE, "Reading perf file attributes");
+
+    LogFunc(LOG_DEBUG, "Attributes section size: %llu", m_fileHeader.attrs.size);
+
     if (m_fileHeader.attrs.offset == 0 && m_fileHeader.attrs.size == 0)
     {
         // TODO: check if this is true (that it's not valid without attributes) and if this may happen at all
@@ -813,7 +820,7 @@ bool PerfFile::ReadAttributes()
     // verify attribute struct length
     if (m_fileHeader.attr_size != sizeof(perf_file_attr))
     {
-        LogFunc(LOG_ERROR, "ERROR: Supplied perf file does not have expected attribute section length! (expected: %u, actual: %u)", sizeof(perf_file_attr), m_fileHeader.attr_size);
+        LogFunc(LOG_ERROR, "Supplied perf file does not have expected attribute section length! (expected: %u, actual: %u)", sizeof(perf_file_attr), m_fileHeader.attr_size);
         // for now, allow different sizes, we need just small portion of it all
         //return false;
     }
@@ -827,7 +834,7 @@ bool PerfFile::ReadAttributes()
     // verify attributes size - it has to be divisible to attr structs
     if ((m_fileHeader.attrs.size % sizeof(perf_file_attr)) != 0)
     {
-        LogFunc(LOG_ERROR, "ERROR: Supplied perf file does not have expected attribute section length according to perf_file_attr size!");
+        LogFunc(LOG_ERROR, "Supplied perf file does not have expected attribute section length according to perf_file_attr size!");
         // for now, allow different sizes, we need just small portion of it all
         //return false;
     }
@@ -907,6 +914,10 @@ bool PerfFile::ReadAttributes()
 
 bool PerfFile::ReadTypes()
 {
+    LogFunc(LOG_VERBOSE, "Reading perf file event types");
+
+    LogFunc(LOG_DEBUG, "Event types section size: %llu", m_fileHeader.event_types.size);
+
     // when no event_types section specified, it's still valid
     if (m_fileHeader.event_types.offset == 0 && m_fileHeader.event_types.size == 0)
         return true;
@@ -959,6 +970,10 @@ bool PerfFile::ReadTypes()
 
 bool PerfFile::ReadData()
 {
+    LogFunc(LOG_VERBOSE, "Reading records from perf file");
+
+    LogFunc(LOG_DEBUG, "Data section size: %llu", m_fileHeader.data.size);
+
     if (m_fileHeader.data.offset == 0 && m_fileHeader.data.size == 0)
     {
         LogFunc(LOG_ERROR, "Specified perf file does not contain any profiling data");
@@ -966,7 +981,7 @@ bool PerfFile::ReadData()
     }
 
     // Following lines are commented out since this is not necessarily true - we ARE able
-    // to collect sufficient data from informations even without these sampling types,
+    // to collect sufficient data from information even without these sampling types,
     // furthermore we will detect the absence of data in analysing phase, since it's not
     // an error at all - just some data in output will be missing
     /*
@@ -986,6 +1001,7 @@ bool PerfFile::ReadData()
     perf_sample sample;
     uint64_t event_number = 0;
     uint32_t esize, prevsize = 0;
+    record_t* rec;
 
     // while there's still something to be read from data section...
     while (ftell(m_file) < m_fileHeader.data.offset + m_fileHeader.data.size)
@@ -1029,41 +1045,32 @@ bool PerfFile::ReadData()
                 // it's profiling sample record, extract sample-related stuff like callchains, etc.
                 perf_event__parse_sample(&evt, m_samplingType, true, &sample);
 
-                record_t* rec;
-
-                std::string name;
                 // fill record structure according to specific type, and name for logging purposes
                 switch (evt.header.type)
                 {
                     case PERF_RECORD_MMAP:
-                        name = "mmap";
                         rec = create_mmap_msg(evt.mmap);
                         LogFunc(LOG_DEBUG, "mmap, start: 0x%.16llX, length: %llu, file: %s", ((record_mmap*)rec)->start, ((record_mmap*)rec)->len, ((record_mmap*)rec)->filename);
                         break;
                     case PERF_RECORD_MMAP2:
-                        name = "mmap2";
                         rec = create_mmap_msg(evt.mmap);
                         LogFunc(LOG_DEBUG, "mmap2, start: 0x%.16llX, length: %llu, file: %s",
                             ((record_mmap2*)rec)->start, ((record_mmap2*)rec)->len, ((record_mmap2*)rec)->filename);
                         m_mmaps2.push_back((record_mmap2*)rec);
                         break;
                     case PERF_RECORD_COMM:
-                        name = "comm";
                         rec = create_comm_msg(evt.comm);
                         LogFunc(LOG_DEBUG, "comm: %s", ((record_comm*)rec)->comm);
                         break;
                     case PERF_RECORD_FORK:
-                        name = "fork";
                         rec = create_fork_msg(evt.fork);
                         LogFunc(LOG_DEBUG, "fork, ppid: %u", ((record_fork*)rec)->ppid);
                         break;
                     case PERF_RECORD_EXIT:
-                        name = "exit";
                         rec = create_exit_msg(evt.exitev);
                         LogFunc(LOG_DEBUG, "exit, ppid: %u", ((record_exit*)rec)->pid);
                         break;
                     case PERF_RECORD_SAMPLE:
-                        name = "sample";
                         rec = create_sample_msg(&sample);
                         // commented out for sanity reasons (for now)
                         //LogFunc(LOG_DEBUG, "sample, ip: %.16llX, period: %llu", ((record_sample*)rec)->ip, ((record_sample*)rec)->period);
@@ -1071,8 +1078,6 @@ bool PerfFile::ReadData()
                         //    LogFunc(LOG_DEBUG, "\t%.16llX", sample.callchain->ips[ji]);
                         break;
                 }
-
-                //LogFunc(LOG_DEBUG, "Read '%s' perf event", name.c_str());
 
                 // store generic record info
                 rec->type = (perf_event_type)evt.header.type;
@@ -1089,7 +1094,7 @@ bool PerfFile::ReadData()
             default: // unknown or NYI event types
             {
                 // just log and seek to next event
-                LogFunc(LOG_DEBUG, "unknown, type: %u; skipped", evt.header.type);
+                LogFunc(LOG_DEBUG, "Unknown perf record, type: %u; skipped", evt.header.type);
                 fseek(m_file, ftell(m_file) + evt.header.size - sizeof(perf_event_header), SEEK_SET);
                 continue;
             }
@@ -1100,21 +1105,29 @@ bool PerfFile::ReadData()
     if (loaded_data != nullptr)
         delete loaded_data;
 
+    LogFunc(LOG_VERBOSE, "Loaded %llu records from perf file", event_number);
+
     return true;
 }
 
 void PerfFile::FillFunctionTable(std::vector<FunctionEntry> &dst)
 {
+    LogFunc(LOG_VERBOSE, "Passing function table from input module to core");
+
     dst.assign(m_functionTable.begin(), m_functionTable.end());
 }
 
 void PerfFile::FillFlatProfileTable(std::vector<FlatProfileRecord> &dst)
 {
+    LogFunc(LOG_VERBOSE, "Passing flat profile table from input module to core");
+
     dst.assign(m_flatProfile.begin(), m_flatProfile.end());
 }
 
 void PerfFile::FillCallGraphMap(CallGraphMap &dst)
 {
+    LogFunc(LOG_VERBOSE, "Passing call graph from input module to core");
+
     // perform deep copy
     for (CallGraphMap::iterator itr = m_callGraph.begin(); itr != m_callGraph.end(); ++itr)
         for (std::map<uint32_t, uint64_t>::iterator sitr = itr->second.begin(); sitr != itr->second.end(); ++sitr)
@@ -1123,6 +1136,8 @@ void PerfFile::FillCallGraphMap(CallGraphMap &dst)
 
 void PerfFile::FillCallTreeMap(CallTreeMap &dst)
 {
+    LogFunc(LOG_VERBOSE, "Passing call tree from input module to core");
+
     // copy just addressess - it will remain the same, do not copy memory contents
     for (CallTreeMap::iterator itr = m_callTree.begin(); itr != m_callTree.end(); ++itr)
         dst[itr->first] = itr->second;
