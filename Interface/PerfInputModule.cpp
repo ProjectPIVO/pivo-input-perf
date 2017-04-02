@@ -76,6 +76,9 @@ void PerfInputModule::ReportFeatures(IMF_SET &set)
 
     // call tree is supported
     IMF_ADD(set, IMF_CALL_TREE);
+
+    // heat map is supported
+    IMF_ADD(set, IMF_HEAT_MAP_DATA);
 }
 
 bool PerfInputModule::LoadFile(const char* file, const char* binaryFile)
@@ -118,4 +121,11 @@ void PerfInputModule::GetCallTreeMap(CallTreeMap &dst)
     dst.clear();
 
     m_pfile->FillCallTreeMap(dst);
+}
+
+void PerfInputModule::GetHeatMapData(TimeHistogramVector &dst)
+{
+    dst.clear();
+
+    m_pfile->FillHeatMapData(dst);
 }

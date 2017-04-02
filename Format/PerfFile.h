@@ -27,11 +27,17 @@
 #include "FlatProfileStructs.h"
 #include "CallGraphStructs.h"
 #include "CallTreeStructs.h"
+#include "HeatMapStructs.h"
 
 #include <set>
 
 // nodes with less than this value of inclusive time percentage will be excluded
 #define CALL_TREE_INCLUSIVE_TIME_THRESHOLD 0.0001
+
+// constant used to convert timestamp to milliseconds (value / SAMPLE_TIMESTAMP_DIMENSION_TO_MS)
+#define SAMPLE_TIMESTAMP_DIMENSION_TO_MS 1000000
+// default heatmap grouping (group samples by X milliseconds)
+#define HEATMAP_GROUP_BY_MS_AMOUNT 100
 
 // currently supported perf file version is 2 (magic PERFILE2)
 const char perfFileMagic[PERF_FILE_MAGIC_LENGTH] = { 'P', 'E', 'R', 'F', 'I', 'L', 'E', '2' };
@@ -70,6 +76,8 @@ class PerfFile
         void FillCallGraphMap(CallGraphMap &dst);
         // fills call tree map with gathered data
         void FillCallTreeMap(CallTreeMap &dst);
+        // fills heat map sparse matrix histogram data
+        void FillHeatMapData(TimeHistogramVector &dst);
 
     protected:
         // private constructor; use PerfFile::Load to instantiate this class

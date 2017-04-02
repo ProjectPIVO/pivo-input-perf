@@ -1162,3 +1162,81 @@ void PerfFile::FillCallTreeMap(CallTreeMap &dst)
     for (CallTreeMap::iterator itr = m_callTree.begin(); itr != m_callTree.end(); ++itr)
         dst[itr->first] = itr->second;
 }
+
+void PerfFile::FillHeatMapData(TimeHistogramVector &dst)
+{
+    LogFunc(LOG_VERBOSE, "Passing heat map data from input module to core");
+
+    // determine time range to properly scale time segment vector
+    uint64_t minTime = (uint64_t)(-1);
+    uint64_t maxTime = 0;
+
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            if (itr->time > maxTime)
+                maxTime = itr->time;
+            if (itr->time < minTime)
+                minTime = itr->time;
+        }
+    }
+
+    // scale down to milliseconds
+    uint64_t timeRange = (maxTime - minTime) / SAMPLE_TIMESTAMP_DIMENSION_TO_MS;
+
+    uint64_t binCount = 1 + (timeRange / HEATMAP_GROUP_BY_MS_AMOUNT);
+
+    LogFunc(LOG_VERBOSE, "Heat map contains %llu bins", binCount);
+
+    dst.resize(binCount);
+
+    record_sample* sample;
+    FunctionEntry* fet;
+
+    uint32_t findex, childindex;
+    uint64_t binidx;
+    for (record_t* itr : m_records)
+    {
+        if (itr->type == PERF_RECORD_SAMPLE)
+        {
+            sample = ((record_sample*)itr);
+
+            fet = GetFunctionByAddress(sample->ip, &findex);
+            // for now, exclude kernel symbols (for sanity reasons)
+            if (fet && fet->functionType != FET_KERNEL)
+            {
+                binidx = ((itr->time - minTime) / SAMPLE_TIMESTAMP_DIMENSION_TO_MS) / HEATMAP_GROUP_BY_MS_AMOUNT;
+
+                if (dst[binidx].find(findex) == dst[binidx].end())
+                {
+                    dst[binidx][findex].timeTotal = 0;
+                    dst[binidx][findex].timeTotalInclusive = 0;
+                }
+
+                dst[binidx][findex].timeTotal += 1.0;
+                dst[binidx][findex].timeTotalInclusive += 1.0;
+
+                // now calculate inclusive time
+
+                // 2 is the right value, since IP callchain contains invalid address ("stopper") on top
+                // and self as second record
+                for (uint64_t i = 2; i < sample->callchain->nr; i++)
+                {
+                    fet = GetFunctionByAddress(sample->callchain->ips[i], &childindex);
+                    // also exclude kernel calls for now
+                    if (fet && fet->functionType != FET_KERNEL)
+                    {
+                        if (dst[binidx].find(childindex) == dst[binidx].end())
+                        {
+                            dst[binidx][childindex].timeTotal = 0;
+                            dst[binidx][childindex].timeTotalInclusive = 0;
+                        }
+
+                        dst[binidx][childindex].timeTotalInclusive += 1.0;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -43,6 +43,7 @@ class PerfInputModule : public InputModule
         virtual void GetFlatProfileData(std::vector<FlatProfileRecord> &dst);
         virtual void GetCallGraphMap(CallGraphMap &dst);
         virtual void GetCallTreeMap(CallTreeMap &dst);
+        virtual void GetHeatMapData(TimeHistogramVector &dst);
 
     protected:
         //
