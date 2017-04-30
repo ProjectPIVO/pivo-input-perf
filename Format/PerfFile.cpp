@@ -33,6 +33,8 @@
 #include <sstream>
 #include <iomanip>
 
+#include <sys/stat.h>
+
 PerfFile::PerfFile()
 {
     //
@@ -556,12 +558,18 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     int cnt = 0;
     int ncnt;
 
+    struct stat binStat, tmpStat;
+
     LogFunc(LOG_VERBOSE, "Loading debug symbols from application binary...");
 
     // build nm binary call parameters
     const char *argv[] = {NM_BINARY_PATH, "-C", binaryFilename, 0};
     // next argv set for resolving dynamic symbols
     const char *argv_dyn[] = {NM_BINARY_PATH, "-C", "-D", binaryFilename, 0};
+
+    binStat.st_ino = 0;
+    tmpStat.st_ino = 0;
+    stat(binaryFilename, &binStat);
 
     // retrieve symbols from binary file
     int readfd = ForkProcessForReading(argv);
@@ -592,6 +600,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
 
     LogFunc(LOG_VERBOSE, "Loading debug symbols from dynamically linked libraries...");
 
+    bool isOriginalBinary;
     std::string libpath;
     FunctionEntry* fet;
     uint64_t memstart;
@@ -637,6 +646,14 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
 
         fclose(tst);
 
+        // try to stat the file - if the i-nodes are equal with original binary, act like we're loading symbols from original binary
+        // this is important when considering directly mmapped binaries, which are not aligned in compile-time
+        stat(libpath.c_str(), &tmpStat);
+
+        isOriginalBinary = (binStat.st_ino == tmpStat.st_ino);
+        if (isOriginalBinary)
+            useDynamic = false;
+
         LogFunc(LOG_VERBOSE, "Loading debug symbols from %s...", libpath.c_str());
 
         // substitute binary parameter in "nm" command line
@@ -657,7 +674,7 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
             // the base address is mandatory here, since the memory is mmap'd to
             // another offset in virtual address space, thus all symbols are
             // moved by this offset
-            ncnt = ResolveSymbolsUsingFD(readfd, memstart, FET_MISC);
+            ncnt = ResolveSymbolsUsingFD(readfd, memstart, isOriginalBinary ? FET_DONTCARE : FET_MISC);
             LogFunc(LOG_VERBOSE, "Loaded %i symbols", ncnt);
             cnt += ncnt;
             close(readfd);
