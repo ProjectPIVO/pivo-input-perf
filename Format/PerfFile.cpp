@@ -603,7 +603,6 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
     bool isOriginalBinary;
     std::string libpath;
     FunctionEntry* fet;
-    uint64_t memstart;
     // go through all mmap'd records (via mmap2) and try to load debug libraries connected with them
     for (record_mmap2* itr : m_mmaps2)
     {
@@ -614,12 +613,12 @@ void PerfFile::ResolveSymbols(const char* binaryFilename)
         // sort to have relevant info every turn
         std::stable_sort(m_symbolTable.begin(), m_symbolTable.end(), FunctionEntrySortPredicate());
 
-        memstart = itr->start;
+        const uint64_t memstart = itr->start - itr->pgoff;
 
         // if there are some symbols inside this memory region, it's possible that it has been
         // mapped previously, just find some symbol and if it falls into mapped region,
         // mark this region as already mapped
-        fet = GetSymbolByAddress(itr->start + itr->len - 1, nullptr);
+        fet = GetSymbolByAddress(memstart + itr->len - 1, nullptr);
         if (fet && fet->address >= itr->start && fet->address < itr->start+itr->len)
         {
             AddMemoryMapping(itr->start, itr->len);
